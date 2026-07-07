@@ -124,7 +124,9 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     routing = load_routing()
     if embedder is None:
         embedder = _build_embedder(cfg, routing)
-    store = MemoryStore(cfg, vault, embedder)
+    from jarvis.memory.graph import KnowledgeGraph
+    graph = KnowledgeGraph(cfg.db_path)
+    store = MemoryStore(cfg, vault, embedder, graph=graph)
     if router is None:
         router = ModelRouter(cfg, routing, bus, node_status=monitor.statuses)
     conversations = ConversationLog(cfg.db_path, vault)
@@ -342,6 +344,23 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
             actor=f"collector:{body.source}",
         )
         return {"queued": message_id}
+
+    @app.get("/graph/connections")
+    def graph_connections(name: str = Query(min_length=1, max_length=100),
+                          k: int = Query(default=12, ge=1, le=50)):
+        return {"name": name, "neighbors": graph.neighbors(name, limit=k)}
+
+    @app.get("/graph/top")
+    def graph_top(kind: str | None = Query(default=None, max_length=20),
+                  k: int = Query(default=20, ge=1, le=100)):
+        return {"entities": graph.top_entities(limit=k, kind=kind),
+                "stats": graph.stats()}
+
+    @app.post("/graph/backfill")
+    def graph_backfill():
+        n = store.backfill_graph()
+        audit.record("operator", "graph.backfill", {"docs": n})
+        return {"docs_processed": n, "stats": graph.stats()}
 
     @app.get("/timeline")
     def timeline(

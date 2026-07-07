@@ -78,10 +78,11 @@ class SearchResult:
 
 
 class MemoryStore:
-    def __init__(self, cfg: Config, vault: Vault, embedder):
+    def __init__(self, cfg: Config, vault: Vault, embedder, graph=None):
         self.cfg = cfg
         self.vault = vault
         self.embedder = embedder
+        self.graph = graph          # KnowledgeGraph | None — populated on ingest
         self.lance_dir: Path = cfg.data_dir / "lancedb"
         self._lance = None
         self._table = None
@@ -156,6 +157,13 @@ class MemoryStore:
             finally:
                 conn.close()
             self._open_or_create_table(dim=len(vectors[0])).add(rows)
+        # populate the knowledge graph from the full doc text — best-effort,
+        # never let a graph hiccup fail an ingest
+        if self.graph is not None:
+            try:
+                self.graph.ingest_text(text, ts=ts)
+            except Exception:
+                log.exception("graph_ingest_failed", doc_id=doc_id)
         log.info("memory_ingested", doc_id=doc_id, kind=kind, source=source, chunks=len(chunks))
         return doc_id
 
@@ -261,6 +269,30 @@ class MemoryStore:
              "preview": self.vault.decrypt_text(PURPOSE, r["content_enc"])[:preview_chars]}
             for r in rows
         ]
+
+    def backfill_graph(self, batch: int = 500) -> int:
+        """Populate the knowledge graph from all existing memory docs (for
+        data ingested before the graph existed). Returns docs processed."""
+        if self.graph is None:
+            return 0
+        conn = db.connect(self.cfg.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT content_enc, ts FROM memory_docs ORDER BY id LIMIT ?",
+                (batch * 1000,),
+            ).fetchall()
+        finally:
+            conn.close()
+        n = 0
+        for r in rows:
+            try:
+                text = self.vault.decrypt_text(PURPOSE, r["content_enc"])
+                self.graph.ingest_text(text, ts=r["ts"])
+                n += 1
+            except Exception:
+                log.exception("graph_backfill_doc_failed")
+        log.info("graph_backfilled", docs=n)
+        return n
 
     def delete_doc(self, doc_id: int) -> bool:
         conn = db.connect(self.cfg.db_path)

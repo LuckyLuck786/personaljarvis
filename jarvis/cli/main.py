@@ -88,6 +88,46 @@ def cmd_keygen(args) -> None:
               "are unrecoverable without it.")
 
 
+def cmd_doctor(args) -> None:
+    from jarvis.core.config import load_config
+    from jarvis.hub.doctor import format_report, run_doctor
+
+    cfg = load_config()
+    checks, healthy = run_doctor(cfg)
+    print("JARVIS pre-flight diagnostics:")
+    print(format_report(checks))
+    if healthy:
+        print("\nAll hard checks passed — safe to start the hub.")
+    else:
+        sys.exit("\nOne or more FAIL checks — fix the arrows above before relying on it.")
+
+
+def cmd_backup(args) -> None:
+    from jarvis.core.config import load_config
+    from jarvis.hub.backup import create_backup
+
+    cfg = load_config()
+    out = create_backup(cfg.data_dir, args.out)
+    size_mb = out.stat().st_size / (1024 * 1024)
+    print(f"backup written: {out} ({size_mb:.1f} MB)")
+    print("Reminder: back up JARVIS_MASTER_KEY separately — it is NOT in this archive.")
+
+
+def cmd_restore(args) -> None:
+    from pathlib import Path
+
+    from jarvis.core.config import load_config
+    from jarvis.hub.backup import restore_backup, verify_backup
+
+    cfg = load_config()
+    check = verify_backup(Path(args.archive))
+    if not check["ok"]:
+        sys.exit("archive failed checksum verification — not restoring")
+    result = restore_backup(Path(args.archive), cfg.data_dir, force=args.force)
+    print(f"restored from {args.archive} (created {time.ctime(result['created'])})")
+    print("Existing data was moved aside as *.pre-restore-* rather than deleted.")
+
+
 def cmd_migrate(args) -> None:
     from jarvis.core.config import load_config
     from jarvis.core.db import migrate
@@ -182,6 +222,31 @@ def cmd_timeline(args) -> None:
         ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(e["ts"]))
         preview = e["preview"].replace("\n", " ")[:120]
         print(f"{ts}  [{e['kind']}/{e['source']}]  {preview}")
+
+
+def cmd_graph(args) -> None:
+    with _client() as c:
+        if args.backfill:
+            print("backfilling graph from existing memory…")
+            r = c.post("/graph/backfill", timeout=300)
+            r.raise_for_status()
+            print(f"processed {r.json()['docs_processed']} docs")
+        if args.name:
+            r = c.get("/graph/connections", params={"name": args.name})
+            r.raise_for_status()
+            nb = r.json()["neighbors"]
+            if not nb:
+                print(f"nothing connected to '{args.name}' yet")
+            for n in nb:
+                print(f"  {n['name']} ({n['kind']}, strength {n['weight']})")
+        else:
+            r = c.get("/graph/top", params={"k": 20})
+            r.raise_for_status()
+            d = r.json()
+            print(f"graph: {d['stats']['entities']} entities, "
+                  f"{d['stats']['relations']} relations")
+            for e in d["entities"]:
+                print(f"  {e['name']} ({e['kind']}, degree {e['degree']})")
 
 
 def cmd_proposals(args) -> None:
@@ -334,6 +399,17 @@ def main() -> None:
     kg.add_argument("--force", action="store_true", help="overwrite existing keys")
     kg.set_defaults(fn=cmd_keygen)
 
+    sub.add_parser("doctor", help="pre-flight diagnostics (safe before hub is up)").set_defaults(fn=cmd_doctor)
+
+    bk = sub.add_parser("backup", help="snapshot memory + DB to an archive")
+    bk.add_argument("--out", default=None, help="output .tar.gz path")
+    bk.set_defaults(fn=cmd_backup)
+
+    rs = sub.add_parser("restore", help="restore from a backup archive")
+    rs.add_argument("archive")
+    rs.add_argument("--force", action="store_true", help="overwrite existing data")
+    rs.set_defaults(fn=cmd_restore)
+
     sub.add_parser("migrate", help="apply DB migrations").set_defaults(fn=cmd_migrate)
     sub.add_parser("serve", help="run the hub daemon").set_defaults(fn=cmd_serve)
     sub.add_parser("status", help="hub + node health").set_defaults(fn=cmd_status)
@@ -362,6 +438,11 @@ def main() -> None:
     tl.add_argument("--kind", default=None)
     tl.add_argument("--limit", type=int, default=100)
     tl.set_defaults(fn=cmd_timeline)
+
+    gr = sub.add_parser("graph", help="knowledge graph (entities + connections)")
+    gr.add_argument("name", nargs="?", default=None, help="show connections for an entity")
+    gr.add_argument("--backfill", action="store_true", help="populate from existing memory")
+    gr.set_defaults(fn=cmd_graph)
 
     pr = sub.add_parser("proposals", help="self-improvement proposals")
     pr.add_argument("--generate", action="store_true", help="mine patterns now")
