@@ -13,7 +13,7 @@ explicit opt-in.
 | **0 — Foundation** | Repo scaffold, config, secrets, SQLite message bus, migrations, structured logging, auth + rate limiting, hash-chained audit log, kill switch, node health monitoring (MacBook reachability), systemd + installers, tests | ✅ **done, running** |
 | **1 — Memory + Chat MVP** | Encrypted RAG (LanceDB + SQLite), hub-local embeddings, tiered model router w/ automatic failover + privacy boundary, memory-grounded chat agent, Telegram bot, CLI chat | ✅ **done, running** — Telegram needs your bot token in `.env` to go live; demo verified over CLI/API with local models |
 | **2 — Capture pipeline** | notes / clipboard / filesystem / shell-history / browser-history collectors with at-source redaction, capture API → durable bus → memory ingestion, timeline view + CLI, launchd agent for the MacBook | ✅ **done, running** — all collectors ship `enabled: false` (opt-in in `config/capture.yaml`); screen-OCR is schema-only, honestly unimplemented |
-| 3 — Tools & actions | plugin system, tasks/reminders/calendar/email/web/shell/home-lab | ⬜ not started |
+| **3 — Tools & actions** | auto-registering plugin system, agent tool loop (plan→act→observe), permission gating (read/act/destructive/shell) with confirmation flow, reminder firing → Telegram; tools: tasks, reminders, notes, memory-search, web-fetch, allow-listed shell, files (jailed), calendar (ICS), email (IMAP read + draft), home-lab | ✅ **done, running** — see the small-model caveat below |
 | 4 — Proactive engine | digests, reminder firing, follow-ups, anomaly alerts, nightly consolidation | ⬜ not started |
 | 5 — Voice | openWakeWord + faster-whisper + Piper | ⬜ not started |
 | 6 — Web dashboard | timeline, search, task board, logs, routing view, kill switch UI | ⬜ not started |
@@ -156,6 +156,38 @@ here and the RAM is precious).
     browser): they cursor to "now" instead of ingesting years of backlog,
     then tail incrementally.
 
+## Tools & the agent loop (Phase 3)
+
+Every LLM tool call goes through one gate: **kill switch → permission level →
+allow-list → audit**. Permission levels (`config/permissions.yaml`,
+per-tool overridable): `read`/`act` run immediately; `destructive` parks in
+`pending_confirmations` and only runs after the operator replies
+`confirm <token>` (intercepted deterministically — never via the model);
+`shell` runs only commands matching `shell.allowlist` (no confirmation
+bypasses the list). Tool output and retrieved memory are always fenced as
+untrusted DATA in the prompt, so a hostile web page or email can't drive a
+tool call. Adding a tool = drop a module in `jarvis/tools/` exporting a
+`TOOLS` list; it auto-registers (verified: 14 tools discovered).
+
+Model-agnostic tool calling uses a strict one-JSON-object protocol so it
+works with local Ollama models that lack native function-calling. The loop
+guards against small-model failure modes: it normalizes mangled protocol
+output, never shows raw JSON to the operator, detects duplicate tool calls,
+and force-synthesizes a plain answer instead of looping or dumping JSON.
+
+**Honest small-model caveat.** On the hub's 3B fallback (`qwen2.5:3b`, chosen
+over `llama3.2:3b` for far better JSON/tool adherence) tool *selection* is
+good but not perfect: explicit phrasing ("run df -h and tell me…") lands the
+right tool more reliably than oblique phrasing ("what's the disk usage?").
+The MacBook's larger model (`qwen2.5:14b`) and the cloud tiers handle this
+cleanly; the router prefers them when available. The gating, confirmation,
+and audit machinery is model-independent and fully covered by tests. One
+observed quirk: because every exchange is re-ingested into memory, a small
+model can *parrot* a previously retrieved confirmation prompt verbatim
+instead of issuing a fresh tool call — the deterministic `confirm <token>`
+path is unaffected, but it's a real limitation of tiny local models, noted
+rather than hidden.
+
 ## Security model (Phase 0 baseline — all implemented)
 
 - **Network**: designed for a Tailscale mesh; hub binds `127.0.0.1` by
@@ -194,10 +226,36 @@ Config lives in `config/jarvis.yaml` (`JARVIS_CONFIG` to override), data in
 `~/.jarvis` (`JARVIS_DATA_DIR`; `/var/lib/jarvis` under systemd), secrets in
 `.env` (`/etc/jarvis/jarvis.env` under systemd).
 
-## Adding a tool / collector (Phase 3 / 2)
+## Adding a tool (worked example)
 
-The plugin contract is fixed now (see `config/permissions.yaml`,
-`config/capture.yaml`): a tool is one module in `jarvis/tools/` declaring
-`schema`, `handler`, `permission`, `destructive`; collectors are modules in
-`jarvis/capture/` configured by `capture.yaml`. Auto-registration lands with
-Phase 3/2 respectively — docs will be updated with a worked example then.
+Drop this in `jarvis/tools/weather.py` and restart — it auto-registers:
+
+```python
+from jarvis.tools.registry import Tool, ToolContext, ToolError
+
+async def weather_now(args: dict, ctx: ToolContext) -> str:
+    city = (args.get("city") or "").strip()
+    if not city:
+        raise ToolError("city is required")
+    # ... call an API via httpx, return a string ...
+    return f"Weather for {city}: ..."
+
+TOOLS = [Tool(
+    name="weather_now",
+    description="Current weather for a city.",
+    params={"city": {"type": "string", "required": True}},
+    handler=weather_now,
+    permission="read",          # read | act | destructive | shell
+)]
+```
+
+`ToolContext` gives you `cfg`, `store` (memory), `router` (LLM), `bus`,
+`audit`, and `permissions`. Mark state-changing tools `act`, dangerous ones
+`destructive` (auto-parks for confirmation).
+
+## Adding a collector (Phase 2)
+
+Subclass `jarvis.capture.base.Collector`, implement `async def poll(self) ->
+list[CaptureEvent]`, and register it in `jarvis/capture/runner.py:COLLECTORS`
+plus a block in `config/capture.yaml`. Redact in the collector before
+returning events.

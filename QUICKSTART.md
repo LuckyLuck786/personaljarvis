@@ -51,6 +51,31 @@ Watch which tier served each request: `.venv/bin/jarvis bus tail llm.request`.
 5. Message your bot. `/status`, `/pause`, `/resume` work; anything else is
    conversation. Anyone not on the allow-list gets silence (and an audit entry).
 
+## Give it tools (Phase 3)
+
+Tools are on by default. Talk naturally:
+
+```bash
+.venv/bin/jarvis chat "remind me at 18:30 to call the plumber"
+.venv/bin/jarvis chat "what are my open tasks?"
+.venv/bin/jarvis chat "run df -h and tell me the disk usage"     # allow-listed shell
+.venv/bin/jarvis chat "fetch example.com and summarize it"
+```
+
+Destructive actions require confirmation:
+
+```bash
+.venv/bin/jarvis chat "reboot the mini node"
+#   → "Reply `confirm ab12cd` to run homelab_reboot({"node": "mini"})…"
+.venv/bin/jarvis chat "confirm ab12cd"
+```
+
+Configure calendar (`tools.calendar_ics_urls` in `config/jarvis.yaml`),
+email (`IMAP_*` in `.env`), home-lab nodes (`tools.homelab`), and the shell
+allow-list (`config/permissions.yaml`) to light up those tools. On the hub's
+3B model, phrase tool requests explicitly; the MacBook/cloud tiers are more
+forgiving (see README caveat).
+
 ## Capture what you do (Phase 2)
 
 Collectors are opt-in. Edit `config/capture.yaml`, flip `enabled: true` on
