@@ -60,9 +60,13 @@ deploy/        install-hub.sh (Ubuntu/systemd), install-macbook.sh, systemd unit
 tests/         bus, migrations, security gating, killswitch, audit, crypto, health
 ```
 
-## Quickstart
+## Getting it running
 
-See [QUICKSTART.md](QUICKSTART.md). Short version:
+- **[DEPLOY.md](DEPLOY.md)** — full step-by-step for your two-node setup
+  (Tailscale → Ollama → hub install → Telegram → capture/voice/dashboard).
+- **[QUICKSTART.md](QUICKSTART.md)** — fastest path on a single dev machine.
+
+Short version:
 
 ```bash
 uv venv && uv pip install -e ".[dev]"
@@ -81,7 +85,7 @@ here and the RAM is precious).
 | Component | Measured / budgeted |
 |---|---|
 | jarvis-hub daemon at boot | **~57–62 MB RSS measured** |
-| jarvis-hub with RAG pipeline exercised (LanceDB/pyarrow loaded) | **~112 MB RSS measured** |
+| jarvis-hub, full system wired (all 8 phases, RAG loaded) | **~135 MB RSS measured** — 13% of the 6 GB hub |
 | systemd cap | `MemoryHigh=512M`, `MemoryMax=1G` — kernel-enforced ceiling |
 | SQLite page cache | capped at 8 MB (`PRAGMA cache_size=-8000`) |
 | Ollama on hub | load-on-demand (`nomic-embed-text` ~300 MB while embedding, `llama3.2:3b` ~2 GB only while generating); never pinned |
