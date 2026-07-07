@@ -14,7 +14,7 @@ explicit opt-in.
 | **1 — Memory + Chat MVP** | Encrypted RAG (LanceDB + SQLite), hub-local embeddings, tiered model router w/ automatic failover + privacy boundary, memory-grounded chat agent, Telegram bot, CLI chat | ✅ **done, running** — Telegram needs your bot token in `.env` to go live; demo verified over CLI/API with local models |
 | **2 — Capture pipeline** | notes / clipboard / filesystem / shell-history / browser-history collectors with at-source redaction, capture API → durable bus → memory ingestion, timeline view + CLI, launchd agent for the MacBook | ✅ **done, running** — all collectors ship `enabled: false` (opt-in in `config/capture.yaml`); screen-OCR is schema-only, honestly unimplemented |
 | **3 — Tools & actions** | auto-registering plugin system, agent tool loop (plan→act→observe), permission gating (read/act/destructive/shell) with confirmation flow, reminder firing → Telegram; tools: tasks, reminders, notes, memory-search, web-fetch, allow-listed shell, files (jailed), calendar (ICS), email (IMAP read + draft), home-lab | ✅ **done, running** — see the small-model caveat below |
-| 4 — Proactive engine | digests, reminder firing, follow-ups, anomaly alerts, nightly consolidation | ⬜ not started |
+| **4 — Proactive engine** | restart-safe scheduler, morning/evening digests → Telegram, reminder firing, commitment follow-ups ("you said you'd…"), node-down anomaly alerts, nightly memory consolidation | ✅ **done, running** — degrades to a plain digest if every LLM tier is down, so it still messages you while the MacBook sleeps |
 | 5 — Voice | openWakeWord + faster-whisper + Piper | ⬜ not started |
 | 6 — Web dashboard | timeline, search, task board, logs, routing view, kill switch UI | ⬜ not started |
 | 7 — Advanced | self-improvement loop, LoRA personal tuning, multi-agent, digital twin | ⬜ not started |
@@ -187,6 +187,27 @@ model can *parrot* a previously retrieved confirmation prompt verbatim
 instead of issuing a fresh tool call — the deterministic `confirm <token>`
 path is unaffected, but it's a real limitation of tiny local models, noted
 rather than hidden.
+
+## Proactive engine (Phase 4)
+
+A single scheduler loop claims due jobs atomically (restart-safe, no
+double-fire) and dispatches them; everything respects the kill switch:
+
+- **Digests** (`daily@07:30` / `20:30`): calendar + open tasks + outstanding
+  commitments, summarized by the router and pushed to Telegram. If every
+  tier is down it sends the structured material verbatim — a degraded but
+  honest digest — so you're never left in silence while the laptop sleeps.
+- **Follow-ups**: commitments are detected deterministically from your own
+  words ("I'll email Sam tomorrow" → recorded, no LLM, no hallucinated
+  commitments) and nudged when their soft deadline passes.
+- **Anomaly alerts**: event-driven off `system.node_status` — a node going
+  down pings you promptly, not on a timer.
+- **Nightly consolidation** (`daily@03:00`): summarizes the day's
+  captures/chats into a durable `daily_summary` and re-ingests it as
+  long-term memory — the "second brain" gaining a coherent long-term layer.
+
+Trigger any job on demand: `jarvis digest morning`, or `POST
+/proactive/run/<job>`. Inspect with `jarvis jobs` and `jarvis followups`.
 
 ## Security model (Phase 0 baseline — all implemented)
 
