@@ -86,18 +86,52 @@ class TelegramInterface:
     async def _on_message(self, update, context) -> None:
         if not self._authorized(update) or not update.message or not update.message.text:
             return
+        # entry log so `journalctl -u jarvis-hub` always shows a text message
+        # arriving — distinguishes "handler never fired" from "slow reply".
+        log.info("telegram_message", chars=len(update.message.text))
         chat_id = update.effective_chat.id
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+        # Immediate placeholder so the bot never looks dead while the (possibly
+        # slow, on a 6 GB hub) model works. We edit it in place with the answer.
+        placeholder = None
+        try:
+            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            placeholder = await update.message.reply_text("🧠 …thinking (the hub can be slow).")
+        except Exception:
+            log.exception("telegram_ack_failed")
+
         try:
             result = await self.agent.handle(
                 update.message.text, interface="telegram", external_id=str(chat_id)
             )
-            reply = result["reply"]
+            reply = (result.get("reply") or "").strip()
+            if not reply:
+                reply = ("I processed that but produced an empty reply "
+                         f"(tier={result.get('tier')}). That usually means no "
+                         "model tier answered — check `jarvis status`.")
         except Exception:
             log.exception("telegram_handle_failed")
             reply = "Something broke on my end handling that. It's been logged."
-        for i in range(0, len(reply), TG_MAX):
-            await update.message.reply_text(reply[i:i + TG_MAX])
+
+        await self._deliver(update, placeholder, reply)
+
+    async def _deliver(self, update, placeholder, reply: str) -> None:
+        """Always land a reply: edit the placeholder with the first chunk,
+        send the rest as follow-ups. Never silently drop."""
+        chunks = [reply[i:i + TG_MAX] for i in range(0, len(reply), TG_MAX)] or ["(empty)"]
+        try:
+            if placeholder is not None:
+                await placeholder.edit_text(chunks[0])
+            else:
+                await update.message.reply_text(chunks[0])
+            for c in chunks[1:]:
+                await update.message.reply_text(c)
+        except Exception:
+            log.exception("telegram_send_failed")
+
+    async def _on_error(self, update, context) -> None:
+        """Catch-all so a handler exception can never sink an update silently."""
+        log.error("telegram_error", error=repr(getattr(context, "error", None)))
 
     # -- outbound (reminders, digests) --------------------------------------------
 
@@ -129,7 +163,11 @@ class TelegramInterface:
             filters,
         )
 
-        self._app = ApplicationBuilder().token(self.token).build()
+        # concurrent_updates so a slow chat reply never blocks /status, /pause,
+        # etc. (a real risk when the hub model takes a minute on 6 GB RAM).
+        self._app = (
+            ApplicationBuilder().token(self.token).concurrent_updates(True).build()
+        )
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("status", self._cmd_status))
         self._app.add_handler(CommandHandler("pause", self._cmd_pause))
@@ -137,6 +175,7 @@ class TelegramInterface:
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
         )
+        self._app.add_error_handler(self._on_error)
         await self._app.initialize()
         await self._app.start()
         await self._app.updater.start_polling(drop_pending_updates=True)
