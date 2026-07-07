@@ -140,12 +140,15 @@ here and the RAM is precious).
 10. **Thin provider layer instead of LiteLLM.** We need exactly four API
     shapes (Ollama, OpenAI-compatible ×2, Gemini); ~150 lines replaces a
     large dependency tree and its resident RAM. `jarvis/router/providers.py`.
-11. **LanceDB stores vectors + ids only — never text.** All content (docs,
-    chunks, conversation messages) is Fernet-encrypted in SQLite. Hybrid
-    retrieval = vector top-4k prefilter → decrypt candidates → in-memory
-    BM25 → reciprocal-rank fusion. Trade-off: keyword recall is bounded by
-    the vector prefilter; at personal scale with 4× oversampling this is
-    negligible, and it means no plaintext search index on disk.
+11. **Vectors live in SQLite as float32 blobs; search is pure-Python cosine
+    — no LanceDB/pyarrow.** Those native libraries require AVX and *SIGILL on
+    pre-2011 CPUs* (this bit a real 2010 Mac Mini deployment), and they're
+    heavy on a 6 GB box. Normalized embeddings are stored per chunk; retrieval
+    is brute-force cosine (== dot product) → BM25 over the top candidates →
+    reciprocal-rank fusion. O(N·dim) per query is trivial at personal scale
+    (thousands of chunks) and runs on ANY CPU. Content stays Fernet-encrypted;
+    only numbers sit in the vector table. `jarvis reindex` re-embeds chunks
+    (e.g. after migrating off the old LanceDB store).
 12. **Everything said to JARVIS is privacy-tagged `personal`** and therefore
     served by local tiers only, unless `routing.yaml` explicitly sets
     `allow_cloud_for_tagged: true`. The router proved this live: with cloud

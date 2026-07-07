@@ -44,13 +44,12 @@ async def test_content_is_encrypted_at_rest(store, cfg):
     secret = "my social security number is TOP-SECRET-VALUE"
     await store.ingest(secret, kind="note", source="test")
 
-    # raw SQLite bytes must not contain the plaintext
+    # raw SQLite bytes must not contain the plaintext (content is Fernet'd;
+    # vectors are just float blobs)
     raw = cfg.db_path.read_bytes()
     assert b"TOP-SECRET-VALUE" not in raw
-    # ...and neither may anything in the LanceDB directory (vectors + ids only)
-    for f in (cfg.data_dir / "lancedb").rglob("*"):
-        if f.is_file():
-            assert b"TOP-SECRET-VALUE" not in f.read_bytes(), f
+    # no LanceDB directory is created anymore
+    assert not (cfg.data_dir / "lancedb").exists()
 
     # but authorized search still decrypts it
     results = await store.search("social security number", k=1)

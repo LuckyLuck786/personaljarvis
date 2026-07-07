@@ -35,6 +35,10 @@ echo "==> python venv + install"
 python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
 "$APP_DIR/.venv/bin/pip" install --quiet "$APP_DIR"
+# Drop LanceDB/pyarrow if a previous install left them: their native kernels
+# require AVX and SIGILL on pre-2011 CPUs (2010 Mac Mini). Vectors now live in
+# SQLite; nothing imports these anymore.
+"$APP_DIR/.venv/bin/pip" uninstall -y lancedb pyarrow >/dev/null 2>&1 || true
 
 echo "==> secrets ($ENV_FILE)"
 if [[ ! -f $ENV_FILE ]]; then

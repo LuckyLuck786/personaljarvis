@@ -1,31 +1,34 @@
 """Encrypted hybrid memory store — the RAG pipeline.
 
-    ingest:  chunk → embed (hub-local) → LanceDB (vectors only)
+    ingest:  chunk → embed (hub-local) → SQLite (normalized vector blob)
                                        → SQLite (Fernet-encrypted content)
-    search:  vector top-(4k) candidates → decrypt → BM25 keyword scoring
+    search:  brute-force cosine top-(4k) → decrypt → BM25 keyword scoring
              → reciprocal-rank-fusion → top k
 
 Deliberate calls:
-  * LanceDB holds vectors + ids ONLY. All text lives encrypted in SQLite,
-    so at-rest exposure is embeddings (which leak topic, not content) and
-    Fernet tokens. Documented trade-off vs. an on-disk FTS index: keyword
-    recall is limited to what the vector prefilter surfaces. At personal
-    scale (tens of thousands of chunks) the 4x oversample makes this a
-    non-issue in practice; LUKS underneath covers the vectors.
-  * BM25 is ~40 lines of stdlib math over ≤ a few dozen candidates per
-    query — no search server, no extra RAM.
+  * Vectors live in SQLite as normalized float32 blobs; similarity is a
+    pure-Python cosine (== dot product, since normalized). NO LanceDB /
+    pyarrow: their native kernels require AVX and SIGILL on pre-2011 CPUs
+    (the 2010 Mac Mini), and they're heavy on a 6 GB box. Brute-force is
+    O(N·dim) per query — trivial at personal scale (thousands of chunks) and
+    it runs on ANY CPU. If you ever store hundreds of thousands of chunks,
+    add an ANN index then; you are nowhere near that.
+  * Content stays Fernet-encrypted in SQLite; vectors are just numbers.
+  * BM25 is ~40 lines of stdlib math over the candidate set — no search
+    server, no extra RAM.
 """
 
 from __future__ import annotations
 
 import asyncio
+import heapq
 import json
 import math
 import re
 import time
 import uuid
+from array import array
 from dataclasses import dataclass
-from pathlib import Path
 
 from jarvis.core import db
 from jarvis.core.config import Config
@@ -41,6 +44,21 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 def _tokens(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower())
+
+
+def _normalize(vec) -> list[float]:
+    norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+    return [v / norm for v in vec]
+
+
+def _pack(vec: list[float]) -> bytes:
+    return array("f", vec).tobytes()
+
+
+def _unpack(blob: bytes) -> array:
+    a = array("f")
+    a.frombytes(blob)
+    return a
 
 
 def _bm25(query: list[str], docs: list[list[str]], k1: float = 1.5, b: float = 0.75) -> list[float]:
@@ -83,38 +101,7 @@ class MemoryStore:
         self.vault = vault
         self.embedder = embedder
         self.graph = graph          # KnowledgeGraph | None — populated on ingest
-        self.lance_dir: Path = cfg.data_dir / "lancedb"
-        self._lance = None
-        self._table = None
         self._lock = asyncio.Lock()
-
-    # -- lance plumbing -------------------------------------------------------
-
-    def _lance_db(self):
-        if self._lance is None:
-            import lancedb  # deferred: pyarrow import costs RAM; only pay when memory is used
-
-            self._lance = lancedb.connect(str(self.lance_dir))
-        return self._lance
-
-    def _open_or_create_table(self, dim: int):
-        if self._table is None:
-            ldb = self._lance_db()
-            if "chunks" in ldb.table_names():
-                self._table = ldb.open_table("chunks")
-            else:
-                import pyarrow as pa
-
-                schema = pa.schema(
-                    [
-                        pa.field("id", pa.string()),
-                        pa.field("doc_id", pa.int64()),
-                        pa.field("ts", pa.float64()),
-                        pa.field("vector", pa.list_(pa.float32(), dim)),
-                    ]
-                )
-                self._table = ldb.create_table("chunks", schema=schema)
-        return self._table
 
     # -- ingest ---------------------------------------------------------------
 
@@ -144,7 +131,6 @@ class MemoryStore:
                      json.dumps(meta or {}), ",".join(tags), ts),
                 )
                 doc_id = cur.lastrowid
-                rows = []
                 for seq, (chunk, vec) in enumerate(zip(chunks, vectors)):
                     chunk_id = uuid.uuid4().hex
                     conn.execute(
@@ -152,11 +138,14 @@ class MemoryStore:
                         " VALUES (?, ?, ?, ?, ?)",
                         (chunk_id, doc_id, seq, self.vault.encrypt(PURPOSE, chunk), ts),
                     )
-                    rows.append({"id": chunk_id, "doc_id": doc_id, "ts": ts,
-                                 "vector": [float(v) for v in vec]})
+                    nv = _normalize(vec)
+                    conn.execute(
+                        "INSERT INTO memory_vectors (chunk_id, doc_id, ts, dim, vec)"
+                        " VALUES (?, ?, ?, ?, ?)",
+                        (chunk_id, doc_id, ts, len(nv), _pack(nv)),
+                    )
             finally:
                 conn.close()
-            self._open_or_create_table(dim=len(vectors[0])).add(rows)
         # populate the knowledge graph from the full doc text — best-effort,
         # never let a graph hiccup fail an ingest
         if self.graph is not None:
@@ -170,35 +159,47 @@ class MemoryStore:
     # -- search ---------------------------------------------------------------
 
     async def search(self, query: str, k: int = 6, kinds: list[str] | None = None) -> list[SearchResult]:
-        if self._table is None:
-            ldb = self._lance_db()
-            if "chunks" not in ldb.table_names():
-                return []  # nothing ingested yet
-            self._table = ldb.open_table("chunks")
-
-        qvec = (await self.embedder.embed([query]))[0]
+        qvec = _normalize((await self.embedder.embed([query]))[0])
+        qn = len(qvec)
         oversample = max(4 * k, 24)
-        hits = self._table.search([float(v) for v in qvec]).limit(oversample).to_list()
-        if not hits:
-            return []
 
         conn = db.connect(self.cfg.db_path)
         try:
-            candidates = []
-            for rank, h in enumerate(hits):
-                row = conn.execute(
-                    "SELECT c.id, c.doc_id, c.content_enc, d.kind, d.source, d.tags, c.ts"
-                    " FROM memory_chunks c JOIN memory_docs d ON d.id = c.doc_id"
-                    " WHERE c.id = ?",
-                    (h["id"],),
-                ).fetchone()
-                if row is None:
-                    continue  # vector row orphaned by a delete; ignore
-                if kinds and row["kind"] not in kinds:
-                    continue
-                candidates.append((rank, row, self.vault.decrypt_text(PURPOSE, row["content_enc"])))
+            # brute-force cosine (== dot, since both sides are unit-normalized).
+            # heapq keeps only the top oversample, so peak RAM is bounded.
+            def scored():
+                for r in conn.execute("SELECT chunk_id, vec FROM memory_vectors"):
+                    v = _unpack(r["vec"])
+                    if len(v) != qn:
+                        continue
+                    yield (sum(qvec[i] * v[i] for i in range(qn)), r["chunk_id"])
+
+            top = heapq.nlargest(oversample, scored(), key=lambda t: t[0])
+            if not top:
+                return []
+            top_ids = [cid for _, cid in top]
+
+            marks = ",".join("?" for _ in top_ids)
+            meta = {
+                row["id"]: row
+                for row in conn.execute(
+                    "SELECT c.id, c.doc_id, c.content_enc, d.kind, d.source, d.tags,"
+                    f" c.ts FROM memory_chunks c JOIN memory_docs d ON d.id = c.doc_id"
+                    f" WHERE c.id IN ({marks})",
+                    top_ids,
+                )
+            }
         finally:
             conn.close()
+
+        candidates = []
+        for rank, cid in enumerate(top_ids):
+            row = meta.get(cid)
+            if row is None:
+                continue  # chunk gone (deleted); ignore
+            if kinds and row["kind"] not in kinds:
+                continue
+            candidates.append((rank, row, self.vault.decrypt_text(PURPOSE, row["content_enc"])))
         if not candidates:
             return []
 
@@ -295,12 +296,41 @@ class MemoryStore:
         return n
 
     def delete_doc(self, doc_id: int) -> bool:
+        # ON DELETE CASCADE removes the chunks and their vectors (FK chain).
         conn = db.connect(self.cfg.db_path)
         try:
             cur = conn.execute("DELETE FROM memory_docs WHERE id = ?", (doc_id,))
-            deleted = cur.rowcount > 0
+            return cur.rowcount > 0
         finally:
             conn.close()
-        if deleted and self._table is not None:
-            self._table.delete(f"doc_id == {int(doc_id)}")
-        return deleted
+
+    async def reindex(self) -> int:
+        """Re-embed any chunks that have no vector yet — e.g. after migrating
+        off LanceDB, or if embeddings were unavailable during an ingest.
+        Returns the number of chunks reindexed."""
+        conn = db.connect(self.cfg.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT c.id, c.doc_id, c.content_enc, c.ts FROM memory_chunks c"
+                " LEFT JOIN memory_vectors v ON v.chunk_id = c.id"
+                " WHERE v.chunk_id IS NULL"
+            ).fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            return 0
+        texts = [self.vault.decrypt_text(PURPOSE, r["content_enc"]) for r in rows]
+        vectors = await self.embedder.embed(texts)
+        conn = db.connect(self.cfg.db_path)
+        try:
+            for r, vec in zip(rows, vectors):
+                nv = _normalize(vec)
+                conn.execute(
+                    "INSERT OR REPLACE INTO memory_vectors (chunk_id, doc_id, ts, dim, vec)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (r["id"], r["doc_id"], r["ts"], len(nv), _pack(nv)),
+                )
+        finally:
+            conn.close()
+        log.info("memory_reindexed", chunks=len(rows))
+        return len(rows)

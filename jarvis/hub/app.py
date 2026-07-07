@@ -356,6 +356,12 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     def memory_recent(limit: int = Query(default=20, ge=1, le=200)):
         return {"docs": store.recent_docs(limit=limit)}
 
+    @app.post("/memory/reindex")
+    async def memory_reindex():
+        n = await store.reindex()
+        audit.record("operator", "memory.reindex", {"chunks": n})
+        return {"reindexed": n}
+
     # -- capture (Phase 2) ------------------------------------------------------
 
     @app.post("/capture/event")

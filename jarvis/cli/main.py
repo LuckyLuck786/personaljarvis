@@ -183,6 +183,13 @@ def cmd_remember(args) -> None:
         print(f"noted (doc {r.json()['doc_id']})")
 
 
+def cmd_reindex(args) -> None:
+    with _client() as c:
+        r = c.post("/memory/reindex", timeout=600)
+        r.raise_for_status()
+        print(f"reindexed {r.json()['reindexed']} chunk(s)")
+
+
 def cmd_recall(args) -> None:
     with _client() as c:
         r = c.get("/memory/search", params={"q": args.query, "k": args.k}, timeout=120)
@@ -426,6 +433,9 @@ def main() -> None:
     rc.add_argument("query")
     rc.add_argument("-k", type=int, default=6)
     rc.set_defaults(fn=cmd_recall)
+
+    sub.add_parser("reindex", help="re-embed chunks missing a vector (e.g. after "
+                   "migrating off LanceDB)").set_defaults(fn=cmd_reindex)
 
     cap = sub.add_parser("capture", help="run capture collectors (foreground)")
     capsub = cap.add_subparsers(dest="capture_cmd", required=True)

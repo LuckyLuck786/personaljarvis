@@ -14,7 +14,9 @@ dependencies = [
     "cryptography>=42.0",
     "pyyaml>=6.0",
     "psutil>=5.9",
-    "lancedb>=0.15",              # on-disk vector store; no server process (6 GB hub)
+    # NOTE: no LanceDB/pyarrow — vectors live in SQLite as float32 blobs with a
+    # pure-Python cosine search. Those native libs require AVX and SIGILL on
+    # pre-2011 CPUs (e.g. the 2010 Mac Mini), and are heavy on a 6 GB hub.
     "python-telegram-bot>=21.0",
 ]
 
