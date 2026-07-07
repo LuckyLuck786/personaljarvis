@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 import jarvis
 from jarvis.cognition.agent import ChatAgent
 from jarvis.cognition.conversation import ConversationLog
+from jarvis.cognition.toolloop import ToolLoop
+from jarvis.tools.registry import ToolContext, ToolRegistry, load_permissions
 from jarvis.core.audit import AuditLog
 from jarvis.core.bus import Bus
 from jarvis.core.config import Config, load_config
@@ -117,8 +119,34 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     if router is None:
         router = ModelRouter(cfg, routing, bus, node_status=monitor.statuses)
     conversations = ConversationLog(cfg.db_path, vault)
-    agent = ChatAgent(cfg, store, router, conversations, killswitch, audit)
+    registry = ToolRegistry(ToolContext(
+        cfg=cfg, store=store, router=router, bus=bus, audit=audit,
+        permissions=load_permissions(),
+    ))
+    registry.discover()
+    toolloop = ToolLoop(registry, router, killswitch)
+    agent = ChatAgent(cfg, store, router, conversations, killswitch, audit,
+                      toolloop=toolloop, registry=registry)
     telegram = TelegramInterface(cfg, agent, killswitch, audit, monitor.statuses)
+
+    async def _reminder_loop(stop: asyncio.Event, interval_s: float = 20):
+        """Fires due reminders: bus event + Telegram push. Respects the kill
+        switch. (The Phase 4 proactive engine builds on this.)"""
+        from jarvis.tools.tasks import pop_due_reminders
+
+        while not stop.is_set():
+            try:
+                if not killswitch.is_paused():
+                    for payload in pop_due_reminders(cfg.db_path):
+                        bus.publish("reminder.due", payload)
+                        audit.record("system", "reminder.fired", payload)
+                        await telegram.send_to_operator(f"⏰ Reminder: {payload['title']}")
+            except Exception:
+                log.exception("reminder_loop_error")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval_s)
+            except asyncio.TimeoutError:
+                pass
 
     async def _ingest_capture_event(msg):
         """Bus consumer: capture.event → memory. Decoupled from the HTTP
@@ -133,6 +161,7 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
         )
 
     ingest_stop = asyncio.Event()
+    reminder_stop = asyncio.Event()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -141,6 +170,7 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
             bus.run_consumer("memory_ingestor", ["capture.event"],
                              _ingest_capture_event, stop=ingest_stop)
         )
+        reminder_task = asyncio.create_task(_reminder_loop(reminder_stop))
         await telegram.start()  # no-op with truthful log line if unconfigured
         bus.publish("system.hub", {"event": "started", "version": jarvis.__version__})
         log.info("hub_started", version=jarvis.__version__, data_dir=str(cfg.data_dir),
@@ -149,7 +179,9 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
         await telegram.stop()
         monitor.stop()
         ingest_stop.set()
+        reminder_stop.set()
         await ingest_task
+        await reminder_task
         monitor_task.cancel()
         try:
             await monitor_task

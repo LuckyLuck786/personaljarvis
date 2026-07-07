@@ -99,6 +99,22 @@ class TelegramInterface:
         for i in range(0, len(reply), TG_MAX):
             await update.message.reply_text(reply[i:i + TG_MAX])
 
+    # -- outbound (reminders, digests) --------------------------------------------
+
+    async def send_to_operator(self, text: str) -> bool:
+        """Push a message to the operator (first allowed ID). Used by the
+        reminder loop and, from Phase 4, the proactive engine."""
+        if not (self._app and self.allowed_ids):
+            return False
+        chat_id = sorted(self.allowed_ids)[0]
+        try:
+            for i in range(0, len(text), TG_MAX):
+                await self._app.bot.send_message(chat_id=chat_id, text=text[i:i + TG_MAX])
+            return True
+        except Exception:
+            log.exception("telegram_push_failed")
+            return False
+
     # -- lifecycle --------------------------------------------------------------
 
     async def start(self) -> None:
