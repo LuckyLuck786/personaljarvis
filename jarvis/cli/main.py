@@ -184,6 +184,45 @@ def cmd_timeline(args) -> None:
         print(f"{ts}  [{e['kind']}/{e['source']}]  {preview}")
 
 
+def cmd_proposals(args) -> None:
+    with _client() as c:
+        if args.generate:
+            print("mining patterns…")
+            c.post("/advanced/improve", timeout=300).raise_for_status()
+        r = c.get("/advanced/proposals")
+        r.raise_for_status()
+        props = r.json()["proposals"]
+    if not props:
+        print("no proposals (run with --generate, or let the nightly job find patterns)")
+    for p in props:
+        print(f"#{p['id']} [{p['kind']}] {p['title']}\n    {p['rationale'][:180]}")
+
+
+def cmd_dispatch(args) -> None:
+    with _client() as c:
+        r = c.post("/advanced/dispatch",
+                   json={"agent": args.agent, "objective": args.objective}, timeout=300)
+        r.raise_for_status()
+        d = r.json()
+    print(f"[{d['agent']} run #{d['run_id']}] status={d['status']}\n\n{d['result']}")
+
+
+def cmd_twin(args) -> None:
+    with _client() as c:
+        if args.rebuild:
+            print("rebuilding digital twin…")
+            c.post("/advanced/twin/rebuild", timeout=300).raise_for_status()
+        r = c.get("/advanced/twin")
+        r.raise_for_status()
+        t = r.json()
+    if not t.get("summary"):
+        print("digital twin not built yet — try: jarvis twin --rebuild")
+        return
+    print(t["summary"])
+    if t.get("facts"):
+        print(t["facts"])
+
+
 def cmd_voice(args) -> None:
     from jarvis.core.config import Secrets
     from jarvis.interfaces.voice.loop import run_voice
@@ -323,6 +362,19 @@ def main() -> None:
     tl.add_argument("--kind", default=None)
     tl.add_argument("--limit", type=int, default=100)
     tl.set_defaults(fn=cmd_timeline)
+
+    pr = sub.add_parser("proposals", help="self-improvement proposals")
+    pr.add_argument("--generate", action="store_true", help="mine patterns now")
+    pr.set_defaults(fn=cmd_proposals)
+
+    di = sub.add_parser("dispatch", help="dispatch a sub-agent")
+    di.add_argument("agent", choices=["researcher", "coder", "summarizer"])
+    di.add_argument("objective")
+    di.set_defaults(fn=cmd_dispatch)
+
+    tw = sub.add_parser("twin", help="show/rebuild the digital twin")
+    tw.add_argument("--rebuild", action="store_true")
+    tw.set_defaults(fn=cmd_twin)
 
     vc = sub.add_parser("voice", help="run the voice loop (wake word/STT/TTS or push-to-talk)")
     vc.add_argument("--tts-voice", default=None, help="path to a Piper .onnx voice model")

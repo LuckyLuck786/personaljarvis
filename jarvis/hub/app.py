@@ -66,6 +66,11 @@ class IngestRequest(BaseModel):
     tags: list[str] = Field(default_factory=lambda: ["personal"], max_length=10)
 
 
+class DispatchRequest(BaseModel):
+    agent: str = Field(pattern=r"^(researcher|coder|summarizer)$")
+    objective: str = Field(min_length=1, max_length=4000)
+
+
 class CaptureEventIn(BaseModel):
     source: str = Field(min_length=1, max_length=50, pattern=r"^[a-z_]+$")
     kind: str = Field(min_length=1, max_length=30, pattern=r"^[a-z_]+$")
@@ -130,11 +135,25 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     registry.discover()
     toolloop = ToolLoop(registry, router, killswitch)
     followups = FollowupStore(cfg.db_path, vault)
+
+    # Phase 7 advanced
+    from jarvis.advanced.improve import SelfImprovement
+    from jarvis.advanced.subagents import SubAgentDispatcher
+    from jarvis.advanced.twin import DigitalTwin
+    twin = DigitalTwin(cfg, store, router, vault, audit)
+    improver = SelfImprovement(cfg, router, vault, audit)
+    dispatcher = SubAgentDispatcher(cfg, registry, router, killswitch, vault,
+                                    store, audit)
+
     agent = ChatAgent(cfg, store, router, conversations, killswitch, audit,
-                      toolloop=toolloop, registry=registry, followups=followups)
+                      toolloop=toolloop, registry=registry, followups=followups,
+                      twin=twin)
     telegram = TelegramInterface(cfg, agent, killswitch, audit, monitor.statuses)
     proactive = ProactiveEngine(cfg, store, router, bus, audit, killswitch,
                                 vault, telegram, registry=registry)
+    # let the nightly consolidation also refresh the digital twin
+    proactive.twin = twin
+    proactive.improver = improver
 
     from jarvis.hub.dashboard import build_dashboard_router
     dashboard_router = build_dashboard_router(cfg, bus, killswitch, store, audit,
@@ -229,6 +248,9 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     app.state.agent = agent
     app.state.proactive = proactive
     app.state.followups = followups
+    app.state.twin = twin
+    app.state.improver = improver
+    app.state.dispatcher = dispatcher
 
     # -- health ---------------------------------------------------------
 
@@ -370,6 +392,47 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     def followups_resolve(followup_id: int):
         ok = followups.resolve(followup_id, "done")
         return {"resolved": ok}
+
+    # -- advanced (Phase 7) -----------------------------------------------------
+
+    @app.post("/advanced/improve")
+    async def advanced_improve():
+        proposals = await improver.propose()
+        return {"proposals": proposals}
+
+    @app.get("/advanced/proposals")
+    def advanced_proposals(status: str = Query(default="proposed", max_length=20)):
+        return {"proposals": improver.list_proposals(status)}
+
+    @app.post("/advanced/proposals/{proposal_id}/{decision}")
+    def advanced_proposal_decide(proposal_id: int, decision: str):
+        status = {"accept": "accepted", "dismiss": "dismissed"}.get(decision)
+        if status is None:
+            return JSONResponse({"detail": "decision must be accept|dismiss"},
+                                status_code=400)
+        return {"updated": improver.set_status(proposal_id, status)}
+
+    @app.post("/advanced/dispatch")
+    async def advanced_dispatch(body: DispatchRequest):
+        run_id = dispatcher.queue(body.agent, body.objective)
+        # run inline for the API (also queryable async via /advanced/run)
+        result = await dispatcher.run(run_id)
+        return result
+
+    @app.get("/advanced/run/{run_id}")
+    def advanced_run(run_id: int):
+        run = dispatcher.get_run(run_id)
+        if run is None:
+            return JSONResponse({"detail": "no such run"}, status_code=404)
+        return run
+
+    @app.get("/advanced/twin")
+    def advanced_twin():
+        return twin.current() or {"summary": None, "note": "not built yet"}
+
+    @app.post("/advanced/twin/rebuild")
+    async def advanced_twin_rebuild():
+        return await twin.rebuild()
 
     # -- audit ---------------------------------------------------------------
 

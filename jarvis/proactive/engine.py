@@ -44,6 +44,7 @@ DEFAULT_JOBS = [
     ("evening_digest", "digest", "daily@20:30"),
     ("followup_sweep", "followup_sweep", "everyN:3600"),
     ("nightly_consolidation", "consolidation", "daily@03:00"),
+    ("self_improvement", "self_improvement", "daily@04:00"),
 ]
 
 
@@ -59,12 +60,15 @@ class ProactiveEngine:
         self.vault = vault
         self.telegram = telegram
         self.registry = registry
+        self.twin = None          # set by the hub (Phase 7)
+        self.improver = None      # set by the hub (Phase 7)
         self._stop = asyncio.Event()
         self.handlers = {
             "digest": self._run_digest,
             "followup_sweep": self._run_followup_sweep,
             "consolidation": self._run_consolidation,
             "reminder_sweep": self._run_reminder_sweep,
+            "self_improvement": self._run_self_improvement,
         }
 
     # -- job bootstrap ---------------------------------------------------------
@@ -297,8 +301,25 @@ class ProactiveEngine:
         await self.store.ingest(f"Daily summary for {yesterday}:\n{summary}",
                                 kind="summary", source="consolidation",
                                 tags=("personal",), ts=end)
+        # refresh the digital twin now that a new day is consolidated
+        if self.twin is not None:
+            try:
+                await self.twin.rebuild()
+            except Exception:
+                log.exception("twin_rebuild_failed")
         log.info("consolidation_done", day=yesterday, events=len(events))
         return summary
+
+    async def _run_self_improvement(self, job: dict) -> str:
+        if self.improver is None:
+            return "self-improvement not wired"
+        proposals = await self.improver.propose()
+        if proposals:
+            titles = "\n".join(f"• {p['title']}" for p in proposals[:5])
+            await self._push(f"💡 I have {len(proposals)} automation idea(s) "
+                             f"from your recent activity:\n{titles}\n"
+                             "Review with `jarvis proposals`.")
+        return f"proposed {len(proposals)}"
 
     # -- outbound + anomaly ----------------------------------------------------
 

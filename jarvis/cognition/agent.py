@@ -33,7 +33,8 @@ CONFIRM_RE = re.compile(r"^\s*confirm\s+([0-9a-f]{6})\s*$", re.IGNORECASE)
 class ChatAgent:
     def __init__(self, cfg: Config, store: MemoryStore, router: ModelRouter,
                  conversations: ConversationLog, killswitch: KillSwitch,
-                 audit: AuditLog, toolloop=None, registry=None, followups=None):
+                 audit: AuditLog, toolloop=None, registry=None, followups=None,
+                 twin=None):
         self.cfg = cfg
         self.store = store
         self.router = router
@@ -43,9 +44,15 @@ class ChatAgent:
         self.toolloop = toolloop      # None → plain memory-grounded chat
         self.registry = registry
         self.followups = followups    # FollowupStore | None
+        self.twin = twin              # DigitalTwin | None (Phase 7 context)
 
     def _build_messages(self, history: list[dict], memories, user_text: str) -> list[dict]:
         system = SYSTEM_PROMPT
+        if self.twin is not None:
+            try:
+                system += self.twin.current_prompt_block()
+            except Exception:
+                log.exception("twin_prompt_block_failed")
         if memories:
             snippets = "\n".join(
                 f"- [{m.kind}/{m.source} {time.strftime('%Y-%m-%d %H:%M', time.localtime(m.ts))}] {m.text}"
