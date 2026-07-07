@@ -60,6 +60,16 @@ class IngestRequest(BaseModel):
     tags: list[str] = Field(default_factory=lambda: ["personal"], max_length=10)
 
 
+class CaptureEventIn(BaseModel):
+    source: str = Field(min_length=1, max_length=50, pattern=r"^[a-z_]+$")
+    kind: str = Field(min_length=1, max_length=30, pattern=r"^[a-z_]+$")
+    content: str = Field(min_length=1, max_length=200_000)
+    meta: dict = Field(default_factory=dict)
+    ts: float | None = None
+    tags: list[str] = Field(default_factory=lambda: ["capture", "personal"],
+                            max_length=10)
+
+
 def _build_embedder(cfg: Config, routing: dict) -> OllamaEmbedder:
     """The embed route's first tier defines where embeddings run — the hub's
     own Ollama by design, so memory never blocks on the laptop."""
@@ -110,9 +120,27 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     agent = ChatAgent(cfg, store, router, conversations, killswitch, audit)
     telegram = TelegramInterface(cfg, agent, killswitch, audit, monitor.statuses)
 
+    async def _ingest_capture_event(msg):
+        """Bus consumer: capture.event → memory. Decoupled from the HTTP
+        endpoint so a slow embed can never back-pressure collectors, and
+        events survive a hub restart (the bus is durable)."""
+        p = msg.payload
+        await store.ingest(
+            p["content"], kind=p.get("kind", "capture"),
+            source=p.get("source", "capture"),
+            tags=tuple(p.get("tags", ["capture", "personal"])),
+            meta=p.get("meta"), ts=p.get("ts"),
+        )
+
+    ingest_stop = asyncio.Event()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         monitor_task = asyncio.create_task(monitor.run())
+        ingest_task = asyncio.create_task(
+            bus.run_consumer("memory_ingestor", ["capture.event"],
+                             _ingest_capture_event, stop=ingest_stop)
+        )
         await telegram.start()  # no-op with truthful log line if unconfigured
         bus.publish("system.hub", {"event": "started", "version": jarvis.__version__})
         log.info("hub_started", version=jarvis.__version__, data_dir=str(cfg.data_dir),
@@ -120,6 +148,8 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
         yield
         await telegram.stop()
         monitor.stop()
+        ingest_stop.set()
+        await ingest_task
         monitor_task.cancel()
         try:
             await monitor_task
@@ -223,6 +253,28 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     @app.get("/memory/recent")
     def memory_recent(limit: int = Query(default=20, ge=1, le=200)):
         return {"docs": store.recent_docs(limit=limit)}
+
+    # -- capture (Phase 2) ------------------------------------------------------
+
+    @app.post("/capture/event")
+    def capture_event(body: CaptureEventIn):
+        message_id = bus.publish(
+            "capture.event",
+            {"source": body.source, "kind": body.kind, "content": body.content,
+             "meta": body.meta, "ts": body.ts or time.time(), "tags": body.tags},
+            actor=f"collector:{body.source}",
+        )
+        return {"queued": message_id}
+
+    @app.get("/timeline")
+    def timeline(
+        hours: float = Query(default=24, gt=0, le=24 * 90),
+        kind: str | None = Query(default=None, max_length=30),
+        limit: int = Query(default=100, ge=1, le=1000),
+    ):
+        since = time.time() - hours * 3600
+        return {"events": store.timeline(since, kinds=[kind] if kind else None,
+                                         limit=limit)}
 
     # -- audit ---------------------------------------------------------------
 

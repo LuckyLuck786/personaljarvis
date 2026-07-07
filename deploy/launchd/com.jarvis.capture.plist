@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- JARVIS capture agent for the MacBook.
+     Install: cp deploy/launchd/com.jarvis.capture.plist ~/Library/LaunchAgents/
+              launchctl load ~/Library/LaunchAgents/com.jarvis.capture.plist
+     Adjust the WorkingDirectory/ProgramArguments paths to your clone.
+     It reads .env in WorkingDirectory for JARVIS_API_KEY and JARVIS_HUB_URL. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis.capture</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOURUSER/jarvis/.venv/bin/jarvis</string>
+        <string>capture</string>
+        <string>run</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/YOURUSER/jarvis</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>NetworkState</key>
+        <true/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/jarvis-capture.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/jarvis-capture.log</string>
+</dict>
+</plist>

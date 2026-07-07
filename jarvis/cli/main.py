@@ -155,6 +155,35 @@ def cmd_recall(args) -> None:
         print(f"[{res['score']:.4f}] ({res['kind']}/{res['source']} {ts}) {res['text'][:200]}")
 
 
+def cmd_capture(args) -> None:
+    from jarvis.core.config import Secrets
+
+    key = Secrets().jarvis_api_key
+    if not key:
+        sys.exit("JARVIS_API_KEY not set")
+    from jarvis.capture.runner import run_forever
+    from jarvis.core.logging import setup_logging
+
+    setup_logging()
+    run_forever(_hub_url(), key, capture_config=args.config)
+
+
+def cmd_timeline(args) -> None:
+    with _client() as c:
+        params = {"hours": args.hours, "limit": args.limit}
+        if args.kind:
+            params["kind"] = args.kind
+        r = c.get("/timeline", params=params)
+        r.raise_for_status()
+        events = r.json()["events"]
+    if not events:
+        print("nothing captured in that window")
+    for e in events:
+        ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(e["ts"]))
+        preview = e["preview"].replace("\n", " ")[:120]
+        print(f"{ts}  [{e['kind']}/{e['source']}]  {preview}")
+
+
 def cmd_pause(args) -> None:
     with _client() as c:
         r = c.post("/control/pause", json={"reason": args.reason})
@@ -229,6 +258,18 @@ def main() -> None:
     rc.add_argument("query")
     rc.add_argument("-k", type=int, default=6)
     rc.set_defaults(fn=cmd_recall)
+
+    cap = sub.add_parser("capture", help="run capture collectors (foreground)")
+    capsub = cap.add_subparsers(dest="capture_cmd", required=True)
+    cr = capsub.add_parser("run")
+    cr.add_argument("--config", default=None, help="capture.yaml path")
+    cap.set_defaults(fn=cmd_capture)
+
+    tl = sub.add_parser("timeline", help="what happened in the last N hours")
+    tl.add_argument("--hours", type=float, default=24)
+    tl.add_argument("--kind", default=None)
+    tl.add_argument("--limit", type=int, default=100)
+    tl.set_defaults(fn=cmd_timeline)
 
     pz = sub.add_parser("pause", help="engage kill switch")
     pz.add_argument("--reason", default="operator request")

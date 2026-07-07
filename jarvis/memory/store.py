@@ -237,6 +237,31 @@ class MemoryStore:
         finally:
             conn.close()
 
+    def timeline(self, since: float, until: float | None = None,
+                 kinds: list[str] | None = None, limit: int = 100,
+                 preview_chars: int = 300) -> list[dict]:
+        """Chronological view of everything captured/remembered in a window."""
+        until = until or time.time()
+        conn = db.connect(self.cfg.db_path)
+        try:
+            sql = ("SELECT id, kind, source, content_enc, tags, ts FROM memory_docs"
+                   " WHERE ts >= ? AND ts <= ?")
+            params: list = [since, until]
+            if kinds:
+                sql += f" AND kind IN ({','.join('?' for _ in kinds)})"
+                params.extend(kinds)
+            sql += " ORDER BY ts ASC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+        return [
+            {"id": r["id"], "kind": r["kind"], "source": r["source"],
+             "tags": r["tags"], "ts": r["ts"],
+             "preview": self.vault.decrypt_text(PURPOSE, r["content_enc"])[:preview_chars]}
+            for r in rows
+        ]
+
     def delete_doc(self, doc_id: int) -> bool:
         conn = db.connect(self.cfg.db_path)
         try:
