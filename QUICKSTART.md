@@ -76,6 +76,20 @@ allow-list (`config/permissions.yaml`) to light up those tools. On the hub's
 3B model, phrase tool requests explicitly; the MacBook/cloud tiers are more
 forgiving (see README caveat).
 
+## Talk to it out loud (Phase 5, on the MacBook)
+
+```bash
+pip install -e ".[voice]"                      # faster-whisper, openWakeWord, sounddevice
+# Piper (TTS) is a separate binary: https://github.com/rhasspy/piper
+.venv/bin/jarvis voice-check                    # honest report of what's enabled
+.venv/bin/jarvis voice --tts-voice ~/piper/en_GB-alan-medium.onnx
+#   say "Jarvis, what's on my plate today?" → spoken answer
+```
+
+Without the extras or a mic it falls back to push-to-talk / typed input —
+still the full cognition pipeline, just no audio. Verified working in text
+mode: `echo "what is 17 times 3?" | jarvis voice` → "17 times 3 equals 51."
+
 ## Capture what you do (Phase 2)
 
 Collectors are opt-in. Edit `config/capture.yaml`, flip `enabled: true` on
