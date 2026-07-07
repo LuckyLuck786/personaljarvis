@@ -112,6 +112,49 @@ def test_doctor_flags_invalid_master_key(tmp_path):
     assert any("Master key" in c.name and c.status == FAIL for c in checks)
 
 
+def test_doctor_model_presence_helper():
+    from jarvis.hub.doctor import _model_present
+
+    have = ["qwen2.5:3b", "nomic-embed-text:latest"]
+    assert _model_present(have, "qwen2.5:3b")
+    assert _model_present(have, "nomic-embed-text")
+    assert not _model_present(have, "qwen2.5:14b")
+
+
+def test_doctor_flags_missing_hub_chat_model(tmp_path, monkeypatch):
+    """The exact failure the user hit: hub reachable + embeddings present, but
+    the routed chat model isn't pulled → degraded when the MacBook sleeps."""
+    import jarvis.hub.doctor as doc
+    from jarvis.core.config import Config, NodeConfig, Secrets
+    from jarvis.core.db import migrate
+    from tests.conftest import TEST_API_KEY, TEST_MASTER_KEY
+
+    cfg = Config(
+        data_dir=tmp_path,
+        nodes={"hub_ollama": NodeConfig(ollama_url="http://127.0.0.1:11434",
+                                        role="embeddings_and_fallback")},
+        secrets=Secrets(_env_file=None, jarvis_api_key=TEST_API_KEY,
+                        jarvis_master_key=TEST_MASTER_KEY),
+    )
+    migrate(cfg.db_path)
+
+    # hub has embeddings but NOT the chat model
+    monkeypatch.setattr(doc, "_required_models_by_node",
+                        lambda c: {"hub_ollama": {"nomic-embed-text", "qwen2.5:3b"}})
+
+    class FakeResp:
+        def raise_for_status(self): pass
+        def json(self): return {"models": [{"name": "nomic-embed-text"}]}
+
+    monkeypatch.setattr(doc.httpx, "get", lambda *a, **k: FakeResp())
+
+    checks, healthy = doc.run_doctor(cfg)
+    names = {c.name: c.status for c in checks}
+    assert names.get("Model 'qwen2.5:3b' on 'hub_ollama'") == doc.FAIL
+    assert names.get("Model 'nomic-embed-text' on 'hub_ollama'") == doc.OK
+    assert healthy is False  # missing hub chat model is a hard fail
+
+
 def test_doctor_detects_broken_audit_chain(cfg):
     from jarvis.core.audit import AuditLog
 

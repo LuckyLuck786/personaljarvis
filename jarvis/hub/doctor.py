@@ -86,9 +86,38 @@ def _check_db(cfg) -> list[Check]:
     return out
 
 
+def _required_models_by_node(cfg) -> dict[str, set[str]]:
+    """Which Ollama models each node must have, per config/routing.yaml.
+    Missing a hub chat model is exactly what causes 'degraded mode' when the
+    MacBook sleeps, so we check it explicitly."""
+    try:
+        from jarvis.router.router import load_routing
+        routing = load_routing()
+    except Exception:
+        return {}
+    wanted: dict[str, set[str]] = {}
+    for tier in routing.get("tiers", []):
+        if tier.get("kind") != "ollama":
+            continue
+        node = tier.get("node")
+        if not node:
+            continue
+        wanted.setdefault(node, set()).update(
+            m for m in tier.get("models", {}).values() if m
+        )
+    return wanted
+
+
+def _model_present(models: list[str], want: str) -> bool:
+    # ollama reports "qwen2.5:3b" or "qwen2.5:3b:latest"; match either way
+    return any(m == want or m.startswith(want + ":") or m.startswith(want)
+               for m in models)
+
+
 def _check_ollama(cfg) -> list[Check]:
     out = []
     routing_embed_ok = False
+    required = _required_models_by_node(cfg)
     for name, node in cfg.nodes.items():
         if not node.ollama_url:
             continue
@@ -98,14 +127,18 @@ def _check_ollama(cfg) -> list[Check]:
             models = [m.get("name", "") for m in r.json().get("models", [])]
             out.append(Check(f"Ollama '{name}' reachable", OK,
                              detail=f"{len(models)} models"))
-            if name == "hub_ollama" or node.role == "embeddings_and_fallback":
-                has_embed = any("embed" in m for m in models)
-                out.append(Check("Embedding model present (hub)",
-                                 OK if has_embed else FAIL,
-                                 fix="" if has_embed else "run `ollama pull nomic-embed-text` on the hub"))
-                routing_embed_ok = has_embed
+            # verify every routed model for this node is actually pulled
+            for want in sorted(required.get(name, ())):
+                present = _model_present(models, want)
+                is_hub = name == "hub_ollama" or node.role == "embeddings_and_fallback"
+                # a missing model on the hub is FAIL (breaks the always-on
+                # path); on the MacBook it's WARN (laptop, cloud/hub cover it)
+                sev = OK if present else (FAIL if is_hub else WARN)
+                out.append(Check(f"Model '{want}' on '{name}'", sev,
+                                 fix="" if present else f"run `ollama pull {want}` on {name}"))
+                if "embed" in want and present and is_hub:
+                    routing_embed_ok = True
         except Exception:
-            role = node.role or "node"
             sev = WARN if name == "macbook" else FAIL  # macbook may be asleep
             out.append(Check(f"Ollama '{name}' reachable", sev,
                              detail="unreachable",
@@ -115,7 +148,7 @@ def _check_ollama(cfg) -> list[Check]:
                          fix="set nodes.*.ollama_url in config/jarvis.yaml"))
     elif not routing_embed_ok:
         out.append(Check("Embeddings available", WARN,
-                         detail="hub embeddings not confirmed — memory ingest may fail"))
+                         detail="hub embedding model not confirmed — memory ingest may fail"))
     return out
 
 

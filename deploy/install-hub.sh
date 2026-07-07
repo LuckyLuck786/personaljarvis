@@ -47,6 +47,20 @@ systemctl daemon-reload
 systemctl enable --now jarvis-hub
 
 echo "==> waiting for health..."
+echo "==> hub Ollama models (embeddings + always-on small chat fallback)"
+# These must match config/routing.yaml's hub_ollama tier. Without the chat
+# model the hub degrades to "no inference tier" whenever the MacBook sleeps.
+HUB_EMBED_MODEL=nomic-embed-text
+HUB_CHAT_MODEL=qwen2.5:3b
+if command -v ollama >/dev/null; then
+  ollama pull "$HUB_EMBED_MODEL" || echo "  ! pull $HUB_EMBED_MODEL manually"
+  ollama pull "$HUB_CHAT_MODEL"  || echo "  ! pull $HUB_CHAT_MODEL manually"
+else
+  echo "  Ollama not installed on the hub. Install + pull the hub models:"
+  echo "    curl -fsSL https://ollama.com/install.sh | sh"
+  echo "    ollama pull $HUB_EMBED_MODEL && ollama pull $HUB_CHAT_MODEL"
+fi
+
 sleep 3
 API_KEY=$(grep '^JARVIS_API_KEY=' "$ENV_FILE" | cut -d= -f2)
 if curl -sf -H "x-api-key: $API_KEY" http://127.0.0.1:8700/health >/dev/null; then
@@ -65,9 +79,10 @@ Next steps (manual, one-time):
      join the Mini, the MacBook, and your phone to one tailnet. Keep the hub
      bound to 127.0.0.1 / the tailscale IP — never a public interface.
   2. Edit /opt/jarvis/config/jarvis.yaml: set nodes.macbook.ollama_url to
-     the MacBook's tailnet hostname.
-  3. Optional (recommended for Phase 1): install Ollama on THIS machine for
-     embeddings only:  curl -fsSL https://ollama.com/install.sh | sh
-     ollama pull nomic-embed-text && ollama pull llama3.2:3b
-  4. Back up JARVIS_MASTER_KEY from /etc/jarvis/jarvis.env somewhere off-hub.
+     the MacBook's tailnet hostname, and pull qwen2.5:14b on the MacBook.
+  3. This installer already pulled the hub models (nomic-embed-text +
+     qwen2.5:3b). Verify with `ollama list`. They MUST match
+     config/routing.yaml or chat degrades when the MacBook is asleep.
+  4. Run `jarvis doctor` to confirm everything is wired before relying on it.
+  5. Back up JARVIS_MASTER_KEY from /etc/jarvis/jarvis.env somewhere off-hub.
 EON
