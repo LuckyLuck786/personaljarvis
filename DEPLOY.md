@@ -166,7 +166,12 @@ twin nightly. Trigger one now to see it: on the Mini,
 
 ## Verify the whole system
 
-On the Mini (or any tailnet machine with the CLI + API key):
+**Before starting the hub, run the pre-flight** (works with the hub down):
+```bash
+jarvis doctor            # checks secrets, migrations, Ollama+models, disk, audit
+                         # exits non-zero on any hard failure — a deploy gate
+```
+Then, once running:
 ```bash
 jarvis status            # hub ok, both nodes up, cloud tiers as configured
 jarvis audit verify      # audit chain intact
@@ -174,6 +179,25 @@ jarvis jobs              # scheduled proactive jobs with next-run times
 ```
 Health also at `http://mini:8700/health` (with the `x-api-key` header) and
 visually on the dashboard.
+
+## Protect your data (do this early)
+
+```bash
+jarvis backup --out ~/jarvis-backups/backup-$(date +%F).tar.gz   # DB + vectors
+# also copy JARVIS_MASTER_KEY (from /etc/jarvis/jarvis.env) somewhere safe —
+# it is NOT in the archive, and encrypted memory is unrecoverable without it.
+# restore later with:  jarvis restore <archive>
+```
+Worth a nightly cron on the Mini: `jarvis backup` writes a timestamped
+archive you can rsync off-box.
+
+## Build the knowledge graph
+
+After you've used it a while (or right after importing notes):
+```bash
+jarvis graph --backfill        # index people/projects from existing memory
+jarvis graph "<a name>"        # see their connections
+```
 
 ---
 

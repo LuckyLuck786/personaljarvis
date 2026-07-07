@@ -192,6 +192,42 @@ instead of issuing a fresh tool call — the deterministic `confirm <token>`
 path is unaffected, but it's a real limitation of tiny local models, noted
 rather than hidden.
 
+## Knowledge graph (who / what / when)
+
+Ingesting memory also populates a lightweight entity graph (the
+`entities`/`relations` tables). Extraction is deterministic and cheap — no
+spaCy/transformers, which would blow the 6 GB budget — favouring precision:
+multi-word proper names, `project X` patterns, and `@handles`. Entities that
+appear in the same note/chat get a weighted `co_occurs` edge, so "who is
+connected to X" and "who do I deal with most" fall out of the accumulated
+weights. Only entity *names* live in these tables; the surrounding content
+stays Fernet-encrypted in `memory_docs`.
+
+```bash
+jarvis graph --backfill      # populate from existing memory (one-time)
+jarvis graph "Sarah Chen"    # → Aurora (project, strength 4), Marcus Lee, David Kim
+jarvis graph                 # most-connected entities overall
+```
+
+The agent can query it too, via the `graph_connections` / `graph_top` tools.
+Typed person-vs-org refinement is an optional LLM pass during nightly
+consolidation; the base graph never depends on a model being reachable.
+
+## Operations: backup, restore, doctor
+
+- **`jarvis backup [--out file]`** snapshots the SQLite DB (via SQLite's
+  online-backup API — consistent even while the hub runs) + the LanceDB
+  vector store into one checksummed `.tar.gz`. Memory content is already
+  encrypted inside those files, so the archive inherits that encryption. The
+  archive does **not** contain `JARVIS_MASTER_KEY` — back that up once,
+  separately.
+- **`jarvis restore <archive> [--force]`** verifies checksums first, moves
+  any existing data aside as `*.pre-restore-*` (never deletes), then restores.
+- **`jarvis doctor`** runs pre-flight diagnostics *without needing the hub
+  up*: secrets present + master key actually decrypts, migrations applied,
+  audit chain intact, Ollama reachable with the embedding model present, disk
+  headroom. Exits non-zero on any hard FAIL, so it doubles as a deploy gate.
+
 ## Proactive engine (Phase 4)
 
 A single scheduler loop claims due jobs atomically (restart-safe, no
