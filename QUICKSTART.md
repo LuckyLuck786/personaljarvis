@@ -1,7 +1,6 @@
 # QUICKSTART
 
-Goal: clone → JARVIS hub running. (Telegram chat arrives in Phase 1; this
-gets the always-on foundation up.)
+Goal: clone → talking to JARVIS, in the fewest steps.
 
 ## Dev machine (any Mac/Linux, Python ≥ 3.11)
 
@@ -26,6 +25,31 @@ JARVIS hub v0.1.0  status=degraded  killswitch=active
 
 Start Ollama and the `macbook` node flips to `up` within its 30 s probe
 interval. Run the tests: `.venv/bin/python -m pytest`.
+
+## Talk to it (CLI)
+
+```bash
+ollama pull nomic-embed-text && ollama pull llama3.2:3b   # embeddings + small chat model
+.venv/bin/jarvis chat "Remember: I decided on the Charter serif font for my resume."
+.venv/bin/jarvis chat "What did I decide about my resume font?"
+#   → "You decided on a serif font, specifically Charter, for your resume design, sir."
+.venv/bin/jarvis recall "resume font"     # raw hybrid memory search
+```
+
+Watch which tier served each request: `.venv/bin/jarvis bus tail llm.request`.
+
+## Talk to it (Telegram — the point of the exercise)
+
+1. Message **@BotFather** on Telegram → `/newbot` → copy the token.
+2. Message **@userinfobot** → copy your numeric user ID.
+3. In `.env` (or `/etc/jarvis/jarvis.env` on the hub):
+   ```
+   TELEGRAM_BOT_TOKEN=123456:ABC...
+   TELEGRAM_ALLOWED_USER_IDS=<your numeric id>
+   ```
+4. Restart the hub (`sudo systemctl restart jarvis-hub` or re-run `jarvis serve`).
+5. Message your bot. `/status`, `/pause`, `/resume` work; anything else is
+   conversation. Anyone not on the allow-list gets silence (and an audit entry).
 
 ## The hub (Ubuntu Mac Mini, production)
 

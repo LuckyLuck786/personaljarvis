@@ -46,7 +46,10 @@ def test_rate_limit_kicks_in(tmp_path):
         ),
     )
     migrate(cfg.db_path)
-    app = create_app(cfg)
+    from jarvis.memory.embeddings import FakeEmbedder
+    from tests.conftest import FakeRouter
+
+    app = create_app(cfg, embedder=FakeEmbedder(), router=FakeRouter())
     with TestClient(app, headers={"x-api-key": TEST_API_KEY}) as c:
         statuses = [c.get("/control/state").status_code for _ in range(8)]
     assert statuses.count(200) == 5

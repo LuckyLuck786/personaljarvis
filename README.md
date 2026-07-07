@@ -11,7 +11,7 @@ explicit opt-in.
 | Phase | Scope | Status |
 |---|---|---|
 | **0 — Foundation** | Repo scaffold, config, secrets, SQLite message bus, migrations, structured logging, auth + rate limiting, hash-chained audit log, kill switch, node health monitoring (MacBook reachability), systemd + installers, tests | ✅ **done, running** |
-| 1 — Memory + Chat MVP | RAG (LanceDB + SQLite), hub embeddings, cognition core, Telegram, model router w/ failover | ⬜ not started |
+| **1 — Memory + Chat MVP** | Encrypted RAG (LanceDB + SQLite), hub-local embeddings, tiered model router w/ automatic failover + privacy boundary, memory-grounded chat agent, Telegram bot, CLI chat | ✅ **done, running** — Telegram needs your bot token in `.env` to go live; demo verified over CLI/API with local models |
 | 2 — Capture pipeline | notes/clipboard/fs/shell/browser collectors, redaction, timeline | ⬜ not started |
 | 3 — Tools & actions | plugin system, tasks/reminders/calendar/email/web/shell/home-lab | ⬜ not started |
 | 4 — Proactive engine | digests, reminder firing, follow-ups, anomaly alerts, nightly consolidation | ⬜ not started |
@@ -80,10 +80,11 @@ here and the RAM is precious).
 
 | Component | Measured / budgeted |
 |---|---|
-| jarvis-hub daemon (Phase 0) | **~62 MB RSS measured** at boot on dev machine |
+| jarvis-hub daemon at boot | **~57–62 MB RSS measured** |
+| jarvis-hub with RAG pipeline exercised (LanceDB/pyarrow loaded) | **~112 MB RSS measured** |
 | systemd cap | `MemoryHigh=512M`, `MemoryMax=1G` — kernel-enforced ceiling |
 | SQLite page cache | capped at 8 MB (`PRAGMA cache_size=-8000`) |
-| Ollama on hub (Phase 1) | load-on-demand only; 1–3B quantized models; never pinned |
+| Ollama on hub | load-on-demand (`nomic-embed-text` ~300 MB while embedding, `llama3.2:3b` ~2 GB only while generating); never pinned |
 | Redis | **not used** — the bus is SQLite (see decisions) |
 
 ## Architecture decisions (running log)
@@ -125,6 +126,23 @@ here and the RAM is precious).
    published to the bus — Phase 4 turns those into anomaly alerts.
 9. **No `[standard]` extras on uvicorn**, no docs/openapi endpoints exposed,
    journald owns log retention — small footprint, smaller surface.
+10. **Thin provider layer instead of LiteLLM.** We need exactly four API
+    shapes (Ollama, OpenAI-compatible ×2, Gemini); ~150 lines replaces a
+    large dependency tree and its resident RAM. `jarvis/router/providers.py`.
+11. **LanceDB stores vectors + ids only — never text.** All content (docs,
+    chunks, conversation messages) is Fernet-encrypted in SQLite. Hybrid
+    retrieval = vector top-4k prefilter → decrypt candidates → in-memory
+    BM25 → reciprocal-rank fusion. Trade-off: keyword recall is bounded by
+    the vector prefilter; at personal scale with 4× oversampling this is
+    negligible, and it means no plaintext search index on disk.
+12. **Everything said to JARVIS is privacy-tagged `personal`** and therefore
+    served by local tiers only, unless `routing.yaml` explicitly sets
+    `allow_cloud_for_tagged: true`. The router proved this live: with cloud
+    keys present but content tagged, cloud tiers are skipped by policy, not
+    by luck (tested in `tests/test_router.py`).
+13. **Router consults the node monitor before dialing.** A tier the monitor
+    already knows is down is skipped without burning a connect timeout;
+    an unknown state is tried optimistically.
 
 ## Security model (Phase 0 baseline — all implemented)
 
