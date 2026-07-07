@@ -33,7 +33,7 @@ CONFIRM_RE = re.compile(r"^\s*confirm\s+([0-9a-f]{6})\s*$", re.IGNORECASE)
 class ChatAgent:
     def __init__(self, cfg: Config, store: MemoryStore, router: ModelRouter,
                  conversations: ConversationLog, killswitch: KillSwitch,
-                 audit: AuditLog, toolloop=None, registry=None):
+                 audit: AuditLog, toolloop=None, registry=None, followups=None):
         self.cfg = cfg
         self.store = store
         self.router = router
@@ -42,6 +42,7 @@ class ChatAgent:
         self.audit = audit
         self.toolloop = toolloop      # None → plain memory-grounded chat
         self.registry = registry
+        self.followups = followups    # FollowupStore | None
 
     def _build_messages(self, history: list[dict], memories, user_text: str) -> list[dict]:
         system = SYSTEM_PROMPT
@@ -85,6 +86,13 @@ class ChatAgent:
         conv_id = self.conversations.get_or_create(interface, external_id)
         history = self.conversations.recent(conv_id, limit=12)
         self.conversations.append(conv_id, "user", text)
+
+        # spot commitments ("I'll email Sam tomorrow") for later follow-up
+        if self.followups is not None:
+            try:
+                self.followups.maybe_record(text)
+            except Exception:
+                log.exception("followup_record_failed")
 
         is_note = text.lower().startswith(NOTE_PREFIXES)
         # everything said to JARVIS is privacy-tagged personal → local tiers

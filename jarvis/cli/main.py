@@ -184,6 +184,36 @@ def cmd_timeline(args) -> None:
         print(f"{ts}  [{e['kind']}/{e['source']}]  {preview}")
 
 
+def cmd_digest(args) -> None:
+    with _client() as c:
+        r = c.post(f"/proactive/run/{args.which}_digest", timeout=300)
+        r.raise_for_status()
+        print(r.json()["result"])
+
+
+def cmd_jobs(args) -> None:
+    with _client() as c:
+        r = c.get("/proactive/jobs")
+        r.raise_for_status()
+        for j in r.json()["jobs"]:
+            nxt = time.strftime("%Y-%m-%d %H:%M", time.localtime(j["next_run"]))
+            last = j["last_status"] or "—"
+            en = "on" if j["enabled"] else "off"
+            print(f"{j['name']:24} {en:3} next={nxt}  last={last}")
+
+
+def cmd_followups(args) -> None:
+    with _client() as c:
+        r = c.get("/followups")
+        r.raise_for_status()
+        fu = r.json()["followups"]
+    if not fu:
+        print("no open follow-ups")
+    for f in fu:
+        by = time.strftime("%Y-%m-%d %H:%M", time.localtime(f["by_ts"])) if f["by_ts"] else "—"
+        print(f"#{f['id']} [{f['status']}] by {by}: {f['text']}")
+
+
 def cmd_pause(args) -> None:
     with _client() as c:
         r = c.post("/control/pause", json={"reason": args.reason})
@@ -270,6 +300,13 @@ def main() -> None:
     tl.add_argument("--kind", default=None)
     tl.add_argument("--limit", type=int, default=100)
     tl.set_defaults(fn=cmd_timeline)
+
+    dg = sub.add_parser("digest", help="generate a digest now (morning|evening)")
+    dg.add_argument("which", choices=["morning", "evening"], nargs="?", default="morning")
+    dg.set_defaults(fn=cmd_digest)
+
+    sub.add_parser("jobs", help="list scheduled proactive jobs").set_defaults(fn=cmd_jobs)
+    sub.add_parser("followups", help="list open follow-ups").set_defaults(fn=cmd_followups)
 
     pz = sub.add_parser("pause", help="engage kill switch")
     pz.add_argument("--reason", default="operator request")

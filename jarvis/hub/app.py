@@ -13,13 +13,17 @@ from contextlib import asynccontextmanager
 import asyncio
 
 from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import jarvis
 from jarvis.cognition.agent import ChatAgent
 from jarvis.cognition.conversation import ConversationLog
 from jarvis.cognition.toolloop import ToolLoop
+from jarvis.proactive.engine import ProactiveEngine
+from jarvis.proactive.followups import FollowupStore
 from jarvis.tools.registry import ToolContext, ToolRegistry, load_permissions
+from jarvis.core import db
 from jarvis.core.audit import AuditLog
 from jarvis.core.bus import Bus
 from jarvis.core.config import Config, load_config
@@ -125,9 +129,12 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     ))
     registry.discover()
     toolloop = ToolLoop(registry, router, killswitch)
+    followups = FollowupStore(cfg.db_path, vault)
     agent = ChatAgent(cfg, store, router, conversations, killswitch, audit,
-                      toolloop=toolloop, registry=registry)
+                      toolloop=toolloop, registry=registry, followups=followups)
     telegram = TelegramInterface(cfg, agent, killswitch, audit, monitor.statuses)
+    proactive = ProactiveEngine(cfg, store, router, bus, audit, killswitch,
+                                vault, telegram, registry=registry)
 
     async def _reminder_loop(stop: asyncio.Event, interval_s: float = 20):
         """Fires due reminders: bus event + Telegram push. Respects the kill
@@ -162,6 +169,7 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
 
     ingest_stop = asyncio.Event()
     reminder_stop = asyncio.Event()
+    anomaly_stop = asyncio.Event()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -171,6 +179,11 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
                              _ingest_capture_event, stop=ingest_stop)
         )
         reminder_task = asyncio.create_task(_reminder_loop(reminder_stop))
+        proactive_task = asyncio.create_task(proactive.run())
+        anomaly_task = asyncio.create_task(
+            bus.run_consumer("anomaly_watch", ["system.node_status"],
+                             proactive.on_node_status, stop=anomaly_stop)
+        )
         await telegram.start()  # no-op with truthful log line if unconfigured
         bus.publish("system.hub", {"event": "started", "version": jarvis.__version__})
         log.info("hub_started", version=jarvis.__version__, data_dir=str(cfg.data_dir),
@@ -178,10 +191,14 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
         yield
         await telegram.stop()
         monitor.stop()
+        proactive.stop()
         ingest_stop.set()
         reminder_stop.set()
+        anomaly_stop.set()
         await ingest_task
         await reminder_task
+        await proactive_task
+        await anomaly_task
         monitor_task.cancel()
         try:
             await monitor_task
@@ -206,6 +223,8 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     app.state.store = store
     app.state.router = router
     app.state.agent = agent
+    app.state.proactive = proactive
+    app.state.followups = followups
 
     # -- health ---------------------------------------------------------
 
@@ -307,6 +326,46 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
         since = time.time() - hours * 3600
         return {"events": store.timeline(since, kinds=[kind] if kind else None,
                                          limit=limit)}
+
+    # -- proactive (Phase 4) ----------------------------------------------------
+
+    @app.post("/proactive/run/{job_name}")
+    async def proactive_run(job_name: str):
+        """Trigger a job on demand (for demos / testing). Returns its output."""
+        conn = db.connect(cfg.db_path)
+        try:
+            row = conn.execute("SELECT id, name, kind, schedule, meta FROM"
+                               " scheduled_jobs WHERE name=?", (job_name,)).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return JSONResponse({"detail": f"no job {job_name}"}, status_code=404)
+        handler = proactive.handlers.get(row["kind"])
+        if handler is None:
+            return JSONResponse({"detail": "no handler"}, status_code=400)
+        result = await handler(dict(row))
+        return {"job": job_name, "result": result}
+
+    @app.get("/proactive/jobs")
+    def proactive_jobs():
+        conn = db.connect(cfg.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT name, kind, schedule, enabled, next_run, last_run,"
+                " last_status FROM scheduled_jobs ORDER BY next_run"
+            ).fetchall()
+        finally:
+            conn.close()
+        return {"jobs": [dict(r) for r in rows]}
+
+    @app.get("/followups")
+    def followups_list():
+        return {"followups": followups.open_followups()}
+
+    @app.post("/followups/{followup_id}/resolve")
+    def followups_resolve(followup_id: int):
+        ok = followups.resolve(followup_id, "done")
+        return {"resolved": ok}
 
     # -- audit ---------------------------------------------------------------
 
