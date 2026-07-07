@@ -12,7 +12,7 @@ explicit opt-in.
 |---|---|---|
 | **0 — Foundation** | Repo scaffold, config, secrets, SQLite message bus, migrations, structured logging, auth + rate limiting, hash-chained audit log, kill switch, node health monitoring (MacBook reachability), systemd + installers, tests | ✅ **done, running** |
 | **1 — Memory + Chat MVP** | Encrypted RAG (LanceDB + SQLite), hub-local embeddings, tiered model router w/ automatic failover + privacy boundary, memory-grounded chat agent, Telegram bot, CLI chat | ✅ **done, running** — Telegram needs your bot token in `.env` to go live; demo verified over CLI/API with local models |
-| 2 — Capture pipeline | notes/clipboard/fs/shell/browser collectors, redaction, timeline | ⬜ not started |
+| **2 — Capture pipeline** | notes / clipboard / filesystem / shell-history / browser-history collectors with at-source redaction, capture API → durable bus → memory ingestion, timeline view + CLI, launchd agent for the MacBook | ✅ **done, running** — all collectors ship `enabled: false` (opt-in in `config/capture.yaml`); screen-OCR is schema-only, honestly unimplemented |
 | 3 — Tools & actions | plugin system, tasks/reminders/calendar/email/web/shell/home-lab | ⬜ not started |
 | 4 — Proactive engine | digests, reminder firing, follow-ups, anomaly alerts, nightly consolidation | ⬜ not started |
 | 5 — Voice | openWakeWord + faster-whisper + Piper | ⬜ not started |
@@ -143,6 +143,18 @@ here and the RAM is precious).
 13. **Router consults the node monitor before dialing.** A tier the monitor
     already knows is down is skipped without burning a connect timeout;
     an unknown state is tried optimistically.
+14. **Capture is decoupled through the durable bus.** Collectors POST to
+    `/capture/event`, which only enqueues; a bus consumer does the
+    chunk/embed/store work. A slow embed can't back-pressure collectors,
+    and queued events survive hub restarts. Collector cursors advance only
+    after successful delivery, so a hub outage means re-emission, not loss.
+15. **Redaction happens inside the collector process** (regexes from
+    `capture.yaml`), before events cross any network or disk boundary.
+    Verified in the live demo: a `password=...` written into a watched note
+    is `[REDACTED]` everywhere downstream.
+16. **Collectors baseline on first run** (shell history, filesystem,
+    browser): they cursor to "now" instead of ingesting years of backlog,
+    then tail incrementally.
 
 ## Security model (Phase 0 baseline — all implemented)
 

@@ -51,6 +51,26 @@ Watch which tier served each request: `.venv/bin/jarvis bus tail llm.request`.
 5. Message your bot. `/status`, `/pause`, `/resume` work; anything else is
    conversation. Anyone not on the allow-list gets silence (and an audit entry).
 
+## Capture what you do (Phase 2)
+
+Collectors are opt-in. Edit `config/capture.yaml`, flip `enabled: true` on
+the sources you want (notes, clipboard, filesystem, shell_history,
+browser_history), then on the machine you work on:
+
+```bash
+.venv/bin/jarvis capture run          # foreground; Ctrl-C to stop
+# MacBook, permanent: see deploy/launchd/com.jarvis.capture.plist
+```
+
+Collectors redact secrets (regexes in `capture.yaml`) *before* anything
+leaves the collector, forward to the hub's authenticated API, baseline on
+first run (no years-of-history flood), and re-emit if the hub is down.
+
+```bash
+.venv/bin/jarvis timeline --hours 24                 # what happened today
+.venv/bin/jarvis chat "what was I working on today?" # ask instead
+```
+
 ## The hub (Ubuntu Mac Mini, production)
 
 ```bash
