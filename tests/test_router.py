@@ -86,6 +86,22 @@ async def test_all_tiers_down_raises_degraded(cfg):
     assert len(exc.value.attempts) == 3
 
 
+async def test_route_referencing_undefined_tier_is_skipped_not_crash(cfg):
+    """A local override can trim `tiers` while `routes` still name the removed
+    ones — the router must skip them, never KeyError."""
+    import copy
+
+    routing = copy.deepcopy(ROUTING)
+    # drop macbook + hub from tiers, but routes still reference them
+    routing["tiers"] = [t for t in routing["tiers"] if t["name"] == "groq"]
+    router = ModelRouter(cfg, routing, Bus(cfg.db_path), node_status={})
+    router._providers = {"groq": StubProvider("groq")}
+    # chat route is [macbook_ollama, groq, hub_ollama]; only groq is defined
+    r = await router.chat("chat", [{"role": "user", "content": "hi"}],
+                          privacy_tags=())
+    assert r.tier == "groq"  # undefined tiers skipped, groq served
+
+
 async def test_tier_choice_is_logged_to_bus(cfg):
     router, _ = make_router(cfg)
     bus = Bus(cfg.db_path)

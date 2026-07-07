@@ -41,15 +41,20 @@ async def _post_json(url: str, payload: dict, headers: dict | None = None,
 
 
 class OllamaProvider:
-    def __init__(self, base_url: str, timeout_s: float = 120.0):
+    def __init__(self, base_url: str, timeout_s: float = 300.0,
+                 num_predict: int | None = None):
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
+        self.num_predict = num_predict   # cap output tokens (bounds slow gen)
 
     async def chat(self, messages: list[dict], model: str) -> ChatResult:
         start = time.monotonic()
+        payload: dict = {"model": model, "messages": messages, "stream": False}
+        if self.num_predict:
+            payload["options"] = {"num_predict": self.num_predict}
         data = await _post_json(
             f"{self.base_url}/api/chat",
-            {"model": model, "messages": messages, "stream": False},
+            payload,
             timeout_s=self.timeout_s,
         )
         return ChatResult(

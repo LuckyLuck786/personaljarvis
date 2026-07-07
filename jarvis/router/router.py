@@ -75,7 +75,11 @@ class ModelRouter:
             if kind == "ollama":
                 node = cfg.nodes.get(t.get("node", ""))
                 if node and node.ollama_url:
-                    self._providers[t["name"]] = OllamaProvider(node.ollama_url)
+                    self._providers[t["name"]] = OllamaProvider(
+                        node.ollama_url,
+                        timeout_s=cfg.cognition.ollama_timeout_s,
+                        num_predict=cfg.cognition.max_output_tokens,
+                    )
             elif kind == "groq":
                 self._providers[t["name"]] = OpenAICompatProvider(GROQ_BASE, s.groq_api_key)
             elif kind == "cerebras":
@@ -110,7 +114,12 @@ class ModelRouter:
         order = self.routing["routes"].get(task) or self.routing["routes"]["chat"]
         attempts: list[tuple[str, str]] = []
         for tier_name in order:
-            tier = self.tiers[tier_name]
+            tier = self.tiers.get(tier_name)
+            if tier is None:
+                # a route may name a tier that isn't defined (e.g. a local
+                # override trimmed the tiers list) — skip it, don't crash
+                attempts.append((tier_name, "skipped: tier not defined"))
+                continue
             if reason := self._skip_reason(tier, privacy_tags):
                 attempts.append((tier_name, f"skipped: {reason}"))
                 continue

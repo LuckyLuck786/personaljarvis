@@ -64,6 +64,11 @@ class CognitionConfig(BaseModel):
     # how many memory snippets to retrieve into the prompt; fewer = shorter
     # prompt = faster on a slow CPU
     memory_k: int = 6
+    # how long to wait for a local Ollama generation before giving up. Old
+    # CPUs need more; raise it if you see 'ReadTimeout talking to …/api/chat'.
+    ollama_timeout_s: float = 300.0
+    # cap generated tokens so a reply can't run away on slow hardware.
+    max_output_tokens: int = 512
 
 
 class Secrets(BaseSettings):
