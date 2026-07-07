@@ -46,6 +46,13 @@ The hub must keep working when the MacBook sleeps; heavy generation fails
 over per `config/routing.yaml`. Everything is host/port-configurable, so the
 whole system also runs collapsed onto one dev machine.
 
+**Default profile is Mini-only.** Out of the box the config routes all
+inference to the hub's local Ollama (`hub_ollama` first in every route), so
+the Mac Mini is a fully self-contained assistant with no dependency on the
+MacBook. The MacBook and cloud tiers are optional fallbacks you enable by
+adding the node / an API key. The Telegram bot long-polls outbound, so it
+works from anywhere with **no open ports and no public IP** — see DEPLOY.md.
+
 ## Repo layout
 
 ```

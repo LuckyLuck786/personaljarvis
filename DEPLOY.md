@@ -1,12 +1,84 @@
 # Deploying JARVIS — step by step
 
-This gets JARVIS running for real across your two machines:
+## Two ways to run it
+
+- **Mini-only (default, recommended for you):** the Ubuntu Mac Mini runs
+  *everything* — the brain, the models, memory, Telegram — 24/7 in ~3–4 GB
+  RAM. No MacBook needed. This is the shipped default. Jump to
+  **[Mini-only setup](#mini-only-setup-the-default)** below.
+- **Two-node (optional upgrade):** add the MacBook for bigger/faster models
+  when it's awake. Covered in the original steps further down.
+
+The Mini-only path is what the config now ships with, so a fresh
+`git pull` + install gives you a self-contained assistant.
+
+---
+
+## Mini-only setup (the default)
+
+On the **Mini**, from a fresh clone or after `git pull`:
+
+```bash
+cd ~/personaljarvis
+git pull
+sudo bash deploy/install-hub.sh     # installs, pulls the hub models, restarts
+```
+
+`install-hub.sh` now pulls `nomic-embed-text` + `qwen2.5:3b` automatically.
+Verify everything is wired:
+
+```bash
+sudo -u jarvis bash -c 'cd /opt/jarvis && JARVIS_DATA_DIR=/var/lib/jarvis \
+  JARVIS_CONFIG=/opt/jarvis/config/jarvis.yaml .venv/bin/jarvis doctor'
+```
+
+All hard checks should be `✓`. Then set up Telegram (below) and you're done —
+chat, memory, digests, reminders all run on the Mini.
+
+**RAM note:** `qwen2.5:3b` uses ~2 GB when generating; with embeddings + the
+hub daemon + Ubuntu you're around 4 GB, inside the 6 GB ceiling. For faster
+(lower-quality) replies, edit `config/routing.yaml` and set the hub `chat`
+model to `gemma2:2b`, `qwen2.5:1.5b`, or `llama3.2:1b`, then
+`ollama pull <that model>`. For fast single-call chat (no natural-language
+reminders), set `cognition.use_tools: false` in `config/jarvis.yaml`.
+
+### Do you need Tailscale or an open port? Almost certainly NOT.
+
+**The Telegram bot needs zero open ports and no public IP.** It dials *out*
+to Telegram (long-polling), so your phone/laptop reach it through Telegram's
+servers no matter where the Mini sits. Keep `bind_host: 127.0.0.1`. Don't
+forward a router port for this.
+
+- **Just want to chat (Telegram):** nothing to configure. No Tailscale, no
+  ports, no public IP. Done.
+- **Also want the web dashboard from other devices:** install **Tailscale**
+  on the Mini + your phone + laptop (same account — only your devices can
+  connect), set `hub.bind_host: 0.0.0.0`, and open the dashboard at the
+  Mini's tailnet IP. Still no public ports.
+- **⚠️ Do NOT forward your public static IP / a router port to port 8700.**
+  That exposes the hub to the whole internet. Even with the API key it's a
+  needless attack surface (scanning, brute force, DoS). If you *must* have
+  public access, put **Caddy** in front for automatic HTTPS and keep the API
+  key — but Tailscale is safer and easier. For daily use, Telegram already
+  gives you secure remote access with none of this.
+
+### What to keep / delete
+
+- **Delete nothing.** Keep the whole repo and your `/var/lib/jarvis` data.
+- The MacBook is now **optional**. You don't need to run anything on it. If
+  you'd added the capture agent there, you can stop it; otherwise ignore it.
+- To add the MacBook later, uncomment the `macbook` node in
+  `config/jarvis.yaml` and pull `qwen2.5:14b` there — the router will prefer
+  it when it's awake, and fall back to the Mini when it sleeps.
+
+---
+
+## Two-node setup (optional)
+
+The rest of this guide covers adding the MacBook for heavier models.
 
 - **hub** — the Ubuntu Mac Mini (always on, 6 GB RAM)
 - **macbook** — your MacBook Pro (heavy inference + capture + voice, when awake)
-
-Total time: ~30–45 minutes, most of it model downloads. Do the steps in
-order. Every command is copy-paste-able; `$` lines run in a terminal.
 
 ---
 
