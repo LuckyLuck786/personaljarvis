@@ -47,6 +47,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
+    # Only the static dashboard SHELL pages are exempt: they contain no data
+    # and no secrets, just HTML/JS. Every data call the JS makes
+    # (/dashboard/api/*) still requires the key, so there is no
+    # unauthenticated data path.
+    STATIC_EXEMPT = frozenset({"/", "/dashboard"})
+
     def __init__(self, app, api_key: str):
         super().__init__(app)
         if not api_key:
@@ -57,6 +63,8 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         self.api_key = api_key
 
     async def dispatch(self, request: Request, call_next):
+        if request.url.path in self.STATIC_EXEMPT:
+            return await call_next(request)
         supplied = request.headers.get(API_KEY_HEADER, "")
         if not secrets.compare_digest(supplied, self.api_key):
             client = request.client.host if request.client else "unknown"
@@ -69,15 +77,21 @@ class KillSwitchMiddleware(BaseHTTPMiddleware):
     """When paused, everything except health/control returns 503 so the
     operator can always inspect state and resume."""
 
-    EXEMPT_PREFIXES = ("/health", "/control")
+    # Dashboard stays reachable when paused so the operator can inspect state
+    # and resume; its data endpoints are read-only and control goes via
+    # /control (also exempt).
+    EXEMPT_PREFIXES = ("/health", "/control", "/dashboard")
+    EXEMPT_EXACT = frozenset({"/"})
 
     def __init__(self, app, killswitch):
         super().__init__(app)
         self.killswitch = killswitch
 
+    def _exempt(self, path: str) -> bool:
+        return path in self.EXEMPT_EXACT or path.startswith(self.EXEMPT_PREFIXES)
+
     async def dispatch(self, request: Request, call_next):
-        path = request.url.path
-        if not path.startswith(self.EXEMPT_PREFIXES) and self.killswitch.is_paused():
+        if not self._exempt(request.url.path) and self.killswitch.is_paused():
             return JSONResponse(
                 {"detail": "JARVIS is paused (kill switch engaged)"}, status_code=503
             )

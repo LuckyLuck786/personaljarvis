@@ -136,6 +136,10 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     proactive = ProactiveEngine(cfg, store, router, bus, audit, killswitch,
                                 vault, telegram, registry=registry)
 
+    from jarvis.hub.dashboard import build_dashboard_router
+    dashboard_router = build_dashboard_router(cfg, bus, killswitch, store, audit,
+                                              monitor, registry)
+
     async def _reminder_loop(stop: asyncio.Event, interval_s: float = 20):
         """Fires due reminders: bus event + Telegram push. Respects the kill
         switch. (The Phase 4 proactive engine builds on this.)"""
@@ -377,6 +381,7 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
     def audit_verify():
         return audit.verify()
 
+    app.include_router(dashboard_router)
     return app
 
 
