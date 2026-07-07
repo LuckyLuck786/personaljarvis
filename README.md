@@ -17,7 +17,7 @@ explicit opt-in.
 | **4 — Proactive engine** | restart-safe scheduler, morning/evening digests → Telegram, reminder firing, commitment follow-ups ("you said you'd…"), node-down anomaly alerts, nightly memory consolidation | ✅ **done, running** — degrades to a plain digest if every LLM tier is down, so it still messages you while the MacBook sleeps |
 | **5 — Voice** | wake word ("Jarvis", openWakeWord) → STT (faster-whisper) → hub `/chat` → TTS (Piper), honest capability detection + push-to-talk/text fallbacks | ✅ **done, running** — audio backends are optional extras (`.[voice]` + Piper) that live on the MacBook; verified end-to-end in text-fallback mode. The wake-word→speak path needs a mic + the extras installed |
 | **6 — Web dashboard** | single self-contained page (no framework/CDN/build): overview metrics, node health, model-routing bars, tool list, memory search, task board, 24h timeline, live audit/bus feed, kill-switch toggle | ✅ **done, running** — verified rendering + interactive (search, pause/resume) in a browser; auth-gated, stays reachable when paused so you can always resume |
-| 7 — Advanced | self-improvement loop, LoRA personal tuning, multi-agent, digital twin | ⬜ not started |
+| **7 — Advanced** | self-improvement loop (evidence-based pattern mining → automation proposals, operator-approved only), multi-agent sub-task dispatch (tool-scoped researcher/coder/summarizer), self-maintaining digital twin injected into chat context | ✅ **done, running** — LoRA fine-tuning is intentionally left as a documented, non-fabricated next step (see below) |
 
 Anything not marked done does not exist yet beyond config schemas and
 placeholder packages — no fabricated capabilities.
@@ -208,6 +208,30 @@ double-fire) and dispatches them; everything respects the kill switch:
 
 Trigger any job on demand: `jarvis digest morning`, or `POST
 /proactive/run/<job>`. Inspect with `jarvis jobs` and `jarvis followups`.
+
+## Advanced capabilities (Phase 7)
+
+- **Self-improvement loop**: `jarvis/advanced/patterns.py` mines *real,
+  countable* signals from your activity (repeated task titles, frequent tool
+  use, recurring browsing) with no LLM in the mining step — so a proposal can
+  never be invented for a pattern that isn't in the data. The model only
+  *phrases* proposals from those hard signals. Proposals are stored for
+  review; **JARVIS never self-executes them** — accepting one is a manual,
+  audited action. `jarvis proposals [--generate]`.
+- **Multi-agent dispatch**: hand a self-contained objective to a tool-scoped
+  sub-agent (researcher / coder / summarizer). Each gets a restricted tool
+  allow-list via a scoped registry view, so a researcher structurally cannot
+  reach shell or destructive tools. Researcher output is filed back into
+  memory. `jarvis dispatch researcher "…"`.
+- **Digital twin**: a self-maintaining, versioned personal-context summary
+  rebuilt nightly (after consolidation) from your summaries/notes/chats, and
+  injected into the chat system prompt so JARVIS always has a compact model
+  of who you are and what you're working on. `jarvis twin [--rebuild]`.
+- **LoRA personal fine-tuning** (honest status): **not implemented.** The
+  spec lists it as optional and it belongs on the MacBook/cloud, never the
+  6 GB hub. The captured data and daily summaries are the training corpus
+  when you want it; wiring an actual training run is the documented next
+  step, deliberately not faked here.
 
 ## Security model (Phase 0 baseline — all implemented)
 
