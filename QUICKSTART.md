@@ -110,6 +110,14 @@ first run (no years-of-history flood), and re-emit if the hub is down.
 .venv/bin/jarvis chat "what was I working on today?" # ask instead
 ```
 
+## The web dashboard (Phase 6)
+
+With the hub running, open **http://127.0.0.1:8700/** (or the hub's tailnet
+address), paste your `JARVIS_API_KEY` once, and you get: overview metrics,
+live node health, model-routing usage, the tool list, memory search, task
+board, a 24h activity timeline, the audit/bus feed, and a kill-switch
+toggle. It's one static page — no framework, no build, negligible RAM.
+
 ## The hub (Ubuntu Mac Mini, production)
 
 ```bash
