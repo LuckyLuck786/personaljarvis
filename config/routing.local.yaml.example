@@ -1,0 +1,29 @@
+# ============================================================
+# OPERATOR-LOCAL override for routing.yaml. Copy to routing.local.yaml
+# (drop the .example). Deep-merges ON TOP of routing.yaml.
+#
+#   sudo cp /opt/jarvis/config/routing.local.yaml.example \
+#           /opt/jarvis/config/routing.local.yaml
+#   sudo systemctl restart jarvis-hub
+#
+# NOTE: `tiers` is a list, so a merge REPLACES the whole `tiers` block if you
+# include it. To only change the hub chat model, redefine the tiers list with
+# your chosen model (copy the block from routing.yaml and edit `chat:`), then
+# `ollama pull <that model>` on the Mini.
+# ============================================================
+
+tiers:
+  - name: hub_ollama
+    kind: ollama
+    node: hub_ollama
+    models:
+      chat: qwen2.5:1.5b        # faster than 3b on an old CPU; also try
+                                # llama3.2:1b (fastest) or gemma2:2b (balanced)
+      embed: nomic-embed-text
+    privacy: local
+    load_on_demand: true
+  # keep the optional fallbacks available
+  - name: groq
+    kind: groq
+    models: { chat: llama-3.3-70b-versatile }
+    privacy: cloud

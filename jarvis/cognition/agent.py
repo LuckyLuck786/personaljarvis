@@ -110,7 +110,7 @@ class ChatAgent:
                 text, kind="note" if is_note else "chat", source=interface,
                 tags=("personal",),
             )
-            memories = await self.store.search(text, k=6)
+            memories = await self.store.search(text, k=self.cfg.cognition.memory_k)
         except Exception:
             # embeddings down (hub Ollama stopped) must not kill chat —
             # degrade to memoryless conversation and say nothing false

@@ -51,7 +51,10 @@ class RouteResult:
 
 def load_routing(path: str | Path | None = None) -> dict:
     path = Path(path or os.environ.get("JARVIS_ROUTING", "config/routing.yaml"))
-    return yaml.safe_load(path.read_text())
+    # merge an optional operator-local override (config/routing.local.yaml)
+    from jarvis.core.config import load_yaml_with_local
+
+    return load_yaml_with_local(path)
 
 
 class ModelRouter:

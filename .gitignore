@@ -4,6 +4,10 @@
 !.env.example
 !deploy/**/*.env.example
 
+# Operator-local config overrides (model choice, speed tuning) — kept out of
+# git so they survive `git pull` and reinstalls without conflicts.
+config/*.local.yaml
+
 # Python
 __pycache__/
 *.pyc

@@ -1,0 +1,19 @@
+# ============================================================
+# OPERATOR-LOCAL override for jarvis.yaml. Copy to jarvis.local.yaml
+# (drop the .example) and it deep-merges ON TOP of jarvis.yaml.
+# Gitignored + preserved across `git pull` and reinstalls, so this is
+# where you tune YOUR machine without touching the tracked config.
+#
+#   sudo cp /opt/jarvis/config/jarvis.local.yaml.example \
+#           /opt/jarvis/config/jarvis.local.yaml
+#   sudo nano /opt/jarvis/config/jarvis.local.yaml
+#   sudo systemctl restart jarvis-hub
+# ============================================================
+
+cognition:
+  # Fast mode for a slow Mini: single model call per message instead of the
+  # multi-call tool loop. You lose natural-language reminders in chat (use the
+  # dashboard/CLI for tasks), but replies are far quicker.
+  use_tools: false
+  # Fewer memory snippets => shorter prompt => faster on a weak CPU.
+  memory_k: 3

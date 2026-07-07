@@ -24,8 +24,11 @@ id -u jarvis &>/dev/null || useradd --system --home-dir "$DATA_DIR" --shell /usr
 mkdir -p "$APP_DIR" "$DATA_DIR" "$ENV_DIR"
 
 echo "==> sync code to $APP_DIR"
+# Exclude operator-local overrides so `*.local.yaml` in $APP_DIR/config
+# survives a reinstall (rsync --delete would otherwise remove them).
 rsync -a --delete \
   --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '.env' \
+  --exclude '*.local.yaml' \
   "$REPO_DIR/" "$APP_DIR/"
 
 echo "==> python venv + install"

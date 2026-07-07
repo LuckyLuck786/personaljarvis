@@ -22,8 +22,13 @@ def setup_logging(level: str = "INFO", pretty: bool | None = None) -> None:
         stream=sys.stderr,
         level=getattr(logging, level, logging.INFO),
     )
-    # uvicorn's own loggers stay, but drop their access spam to WARNING
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # Quiet the noisy libraries so the journal shows JARVIS's OWN events
+    # (message received, model call, tier used) instead of a wall of Telegram
+    # long-poll / Ollama health-probe HTTP lines. This is the "signal, not
+    # ping spam" the operator wants in `journalctl -f`.
+    for noisy in ("uvicorn.access", "httpx", "httpcore",
+                  "telegram", "telegram.ext", "telegram.request"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     renderer = (
         structlog.dev.ConsoleRenderer()

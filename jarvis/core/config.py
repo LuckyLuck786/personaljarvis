@@ -61,6 +61,9 @@ class CognitionConfig(BaseModel):
     # single-call chat, better on a 6 GB Mini)
     use_tools: bool = True
     history_turns: int = 12
+    # how many memory snippets to retrieve into the prompt; fewer = shorter
+    # prompt = faster on a slow CPU
+    memory_k: int = 6
 
 
 class Secrets(BaseSettings):
@@ -113,6 +116,29 @@ def _find_config_file(explicit: str | Path | None = None) -> Path | None:
     return None
 
 
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge overlay onto base (overlay wins). Used for the
+    operator-local override file."""
+    out = dict(base)
+    for k, v in overlay.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def load_yaml_with_local(path: Path) -> dict:
+    """Load a YAML config and merge an optional sibling `<name>.local.yaml`
+    on top. The .local file is gitignored and preserved across reinstalls, so
+    operators tune model/speed/etc. there without git conflicts."""
+    raw = yaml.safe_load(path.read_text()) or {} if path.exists() else {}
+    local = path.with_name(f"{path.stem}.local{path.suffix}")
+    if local.exists():
+        raw = _deep_merge(raw, yaml.safe_load(local.read_text()) or {})
+    return raw
+
+
 def load_config(
     config_file: str | Path | None = None,
     env_file: str | Path | None = None,
@@ -121,7 +147,7 @@ def load_config(
     raw: dict = {}
     path = _find_config_file(config_file)
     if path and path.exists():
-        raw = yaml.safe_load(path.read_text()) or {}
+        raw = load_yaml_with_local(path)
 
     resolved_data_dir = Path(
         data_dir
