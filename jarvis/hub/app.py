@@ -81,17 +81,37 @@ class CaptureEventIn(BaseModel):
                             max_length=10)
 
 
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
+DEFAULT_EMBED_MODEL = "nomic-embed-text"
+
+
 def _build_embedder(cfg: Config, routing: dict) -> OllamaEmbedder:
     """The embed route's first tier defines where embeddings run — the hub's
-    own Ollama by design, so memory never blocks on the laptop."""
-    tier_name = routing["routes"]["embed"][0]
-    tier = next(t for t in routing["tiers"] if t["name"] == tier_name)
-    node = cfg.nodes.get(tier.get("node", ""))
-    if not node or not node.ollama_url:
-        raise ValueError(
-            f"embed tier '{tier_name}' has no node/ollama_url in config/jarvis.yaml"
+    own Ollama by design, so memory never blocks on the laptop.
+
+    Resilient: if the config is minimal or botched (e.g. jarvis.yaml
+    accidentally overwritten by an override that dropped `nodes:`), we default
+    to the standard local Ollama rather than crash-looping the always-on
+    service. A loud warning makes the fallback visible in the journal."""
+    try:
+        tier_name = routing["routes"]["embed"][0]
+        tier = next(t for t in routing["tiers"] if t["name"] == tier_name)
+        model = tier.get("models", {}).get("embed", DEFAULT_EMBED_MODEL)
+        node = cfg.nodes.get(tier.get("node", ""))
+        url = node.ollama_url if (node and node.ollama_url) else None
+    except (KeyError, IndexError, StopIteration):
+        tier_name, model, url = "hub_ollama", DEFAULT_EMBED_MODEL, None
+
+    if not url:
+        log.warning(
+            "embed_node_defaulted", tier=tier_name, url=DEFAULT_OLLAMA_URL,
+            hint="no usable node/ollama_url in config — defaulting to local "
+                 "Ollama. If unintended, check that jarvis.yaml still has a "
+                 "`nodes:` block (an override .local.yaml MERGES onto it, it "
+                 "must not replace jarvis.yaml).",
         )
-    return OllamaEmbedder(node.ollama_url, tier["models"]["embed"])
+        url = DEFAULT_OLLAMA_URL
+    return OllamaEmbedder(url, model)
 
 
 def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> FastAPI:
