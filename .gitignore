@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+*.env
+!.env.example
+!deploy/**/*.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+dist/
+build/
+
+# Runtime data (SQLite, vector store, logs live outside the repo by default,
+# but guard against accidental in-repo data dirs)
+var/
+data/
+*.db
+*.db-wal
+*.db-shm
+logs/
+
+# OS
+.DS_Store

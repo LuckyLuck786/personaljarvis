@@ -1,0 +1,35 @@
+# ============================================================
+# Capture sources — consumed by jarvis/capture collectors
+# (Phase 2; schema is final now, everything ships disabled).
+# Redaction happens at the collector, BEFORE anything hits the
+# bus or memory store.
+# ============================================================
+
+defaults:
+  redact_patterns:                 # regexes scrubbed from all captured text
+    - '(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*\S+'
+    - '\b\d{13,19}\b'              # card-like numbers
+  privacy_tag: capture             # everything captured is local-only by default
+
+collectors:
+  notes:
+    enabled: false
+    watch_dirs: ["~/notes"]
+  clipboard:
+    enabled: false
+    poll_interval_s: 2
+    max_item_kb: 64
+  filesystem:
+    enabled: false
+    watch_dirs: ["~/projects"]
+    ignore: ["**/.git/**", "**/node_modules/**", "**/.venv/**"]
+  shell_history:
+    enabled: false
+    files: ["~/.zsh_history"]
+  browser_history:
+    enabled: false
+    browsers: [chrome, safari]
+    exclude_domains: ["mail.google.com", "*.bank*"]
+  screen_ocr:
+    enabled: false                 # opt-in only; heavy + sensitive
+    interval_s: 300

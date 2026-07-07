@@ -1,0 +1,60 @@
+# ============================================================
+# Model routing policy — THE single editable file that decides
+# which model serves which request. Consumed by jarvis/router
+# (wired up in Phase 1; schema is final now).
+#
+# Tier order = failover order. The router health-checks each
+# tier and falls through automatically.
+# ============================================================
+
+tiers:
+  - name: macbook_ollama
+    kind: ollama
+    node: macbook                    # resolved via nodes.* in jarvis.yaml
+    models:
+      chat: qwen2.5:14b
+      fast: llama3.1:8b
+    privacy: local                   # may see privacy-tagged content
+  - name: hub_ollama
+    kind: ollama
+    node: hub_ollama
+    models:
+      chat: llama3.2:3b              # 6 GB RAM ceiling: 1–3B quantized only
+      embed: nomic-embed-text        # always-on embedding path lives here
+    privacy: local
+    load_on_demand: true             # never pinned in RAM
+  - name: groq
+    kind: groq
+    models:
+      chat: llama-3.3-70b-versatile
+    privacy: cloud
+  - name: cerebras
+    kind: cerebras
+    models:
+      chat: llama-3.3-70b
+    privacy: cloud
+  - name: gemini
+    kind: gemini
+    models:
+      chat: gemini-2.5-flash
+      heavy: gemini-2.5-pro
+    privacy: cloud
+
+routes:
+  # task class -> ordered tier preference (subset of tiers above)
+  chat:            [macbook_ollama, groq, cerebras, gemini, hub_ollama]
+  heavy_reasoning: [gemini, macbook_ollama, cerebras, groq]
+  summarize:       [macbook_ollama, groq, gemini, hub_ollama]
+  embed:           [hub_ollama]      # embeddings NEVER depend on the laptop
+  classify_fast:   [groq, macbook_ollama, hub_ollama]
+
+privacy:
+  # Content tagged with any of these never leaves privacy: local tiers
+  # unless allow_cloud_for_tagged is flipped to true (explicit opt-in).
+  local_only_tags: [personal, capture, health, finance]
+  allow_cloud_for_tagged: false
+
+# When every remote tier is down, degrade to hub_ollama + memory-only
+# answers and say so plainly instead of pretending full capability.
+degraded_mode:
+  announce: true

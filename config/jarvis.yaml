@@ -1,0 +1,39 @@
+# ============================================================
+# JARVIS main config (non-secret). Secrets live in .env only.
+# Every component reads host/port/paths from here so the whole
+# system can run on two nodes or collapsed onto one machine.
+# ============================================================
+
+hub:
+  # Bind to loopback by default. On the hub, either keep loopback and
+  # front with `tailscale serve`, or bind the Tailscale interface IP
+  # directly. Never bind 0.0.0.0 on a machine with a public IP.
+  bind_host: 127.0.0.1
+  port: 8700
+  # Requests per minute per client IP before 429s. Assume adversarial input.
+  rate_limit_per_min: 120
+
+# Node topology. The hub must degrade gracefully when the MacBook sleeps.
+nodes:
+  macbook:
+    ollama_url: http://127.0.0.1:11434   # set to Tailscale hostname in prod, e.g. http://macbook.tail-net.ts.net:11434
+    role: primary_inference
+    check_interval_s: 30
+  hub_ollama:
+    ollama_url: http://127.0.0.1:11434   # on the hub itself; small models + embeddings only (6 GB RAM)
+    role: embeddings_and_fallback
+    check_interval_s: 60
+
+bus:
+  poll_interval_s: 1.0     # consumer poll cadence; 1s keeps CPU/RAM negligible
+  max_attempts: 5          # per-consumer retries before a message is dead-lettered
+  retention_days: 14       # processed messages pruned after this
+
+health:
+  # How many node-status history rows to keep per node.
+  history_rows_per_node: 500
+
+logging:
+  level: INFO
+  # JSON to stderr by default (journald-friendly). Set pretty: true for dev.
+  pretty: false

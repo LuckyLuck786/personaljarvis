@@ -1,0 +1,23 @@
+# ============================================================
+# Tool permission policy — consumed by jarvis/tools (Phase 3;
+# schema is final now). Every tool declares a permission level
+# and destructive flag; this file is the operator override.
+# ============================================================
+
+levels:
+  read:      auto          # runs without confirmation
+  act:       auto          # non-destructive actions (create task, draft email)
+  destructive: confirm     # ALWAYS requires explicit confirmation via the
+                           # active interface before executing
+  shell:     allowlist     # only commands matching shell.allowlist run at all
+
+shell:
+  allowlist:
+    - "df -h"
+    - "uptime"
+    - "free -m"
+    - "systemctl status jarvis-*"
+  # Anything not matching is refused outright — no confirmation path around
+  # the allowlist. Extend deliberately.
+
+overrides: {}              # per-tool overrides, e.g. { email_send: confirm }
