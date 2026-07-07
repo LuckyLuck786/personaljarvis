@@ -23,6 +23,14 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
+# Voice extras run on the MacBook (mic + models); the hub needs none of these.
+voice = [
+    "faster-whisper>=1.0",     # STT
+    "openwakeword>=0.6",       # wake word "Jarvis"
+    "sounddevice>=0.4",        # mic capture
+    "numpy>=1.26",
+    # Piper (TTS) is a standalone binary — install separately, see README.
+]
 
 [project.scripts]
 jarvis = "jarvis.cli.main:main"

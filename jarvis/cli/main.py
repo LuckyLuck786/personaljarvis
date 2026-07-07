@@ -184,6 +184,29 @@ def cmd_timeline(args) -> None:
         print(f"{ts}  [{e['kind']}/{e['source']}]  {preview}")
 
 
+def cmd_voice(args) -> None:
+    from jarvis.core.config import Secrets
+    from jarvis.interfaces.voice.loop import run_voice
+    from jarvis.core.logging import setup_logging
+
+    setup_logging()
+    key = Secrets().jarvis_api_key
+    run_voice(_hub_url(), key, tts_voice=args.tts_voice)
+
+
+def cmd_voice_check(args) -> None:
+    from jarvis.core.config import Secrets
+    from jarvis.interfaces.voice.loop import VoiceLoop
+
+    caps = VoiceLoop(_hub_url(), Secrets().jarvis_api_key,
+                     tts_voice=args.tts_voice).capabilities()
+    print("Voice capabilities (install '.[voice]' + Piper to enable all):")
+    print(f"  {caps.summary()}")
+    if not (caps.mic and caps.wakeword and caps.stt and caps.tts):
+        print("  Fallbacks are active for anything 'off' — voice still usable "
+              "in push-to-talk / text mode.")
+
+
 def cmd_digest(args) -> None:
     with _client() as c:
         r = c.post(f"/proactive/run/{args.which}_digest", timeout=300)
@@ -300,6 +323,14 @@ def main() -> None:
     tl.add_argument("--kind", default=None)
     tl.add_argument("--limit", type=int, default=100)
     tl.set_defaults(fn=cmd_timeline)
+
+    vc = sub.add_parser("voice", help="run the voice loop (wake word/STT/TTS or push-to-talk)")
+    vc.add_argument("--tts-voice", default=None, help="path to a Piper .onnx voice model")
+    vc.set_defaults(fn=cmd_voice)
+
+    vck = sub.add_parser("voice-check", help="report voice capabilities honestly")
+    vck.add_argument("--tts-voice", default=None)
+    vck.set_defaults(fn=cmd_voice_check)
 
     dg = sub.add_parser("digest", help="generate a digest now (morning|evening)")
     dg.add_argument("which", choices=["morning", "evening"], nargs="?", default="morning")
