@@ -56,6 +56,13 @@ class ToolsConfig(BaseModel):
     homelab: dict[str, str] = Field(default_factory=dict)
 
 
+class CognitionConfig(BaseModel):
+    # tool-loop on (natural-language reminders/tasks work) vs off (fast
+    # single-call chat, better on a 6 GB Mini)
+    use_tools: bool = True
+    history_turns: int = 12
+
+
 class Secrets(BaseSettings):
     """Secrets come exclusively from the environment / .env — never YAML."""
 
@@ -87,6 +94,7 @@ class Config(BaseModel):
     health: HealthConfig = Field(default_factory=HealthConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    cognition: CognitionConfig = Field(default_factory=CognitionConfig)
     secrets: Secrets = Field(default_factory=Secrets, repr=False)
 
     @property
@@ -133,5 +141,6 @@ def load_config(
         health=HealthConfig(**raw.get("health", {})),
         logging=LoggingConfig(**raw.get("logging", {})),
         tools=ToolsConfig(**raw.get("tools", {})),
+        cognition=CognitionConfig(**raw.get("cognition", {})),
         secrets=secrets,
     )

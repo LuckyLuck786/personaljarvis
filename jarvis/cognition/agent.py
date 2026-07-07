@@ -91,7 +91,7 @@ class ChatAgent:
                     "latency_ms": 0, "memories_used": 0}
 
         conv_id = self.conversations.get_or_create(interface, external_id)
-        history = self.conversations.recent(conv_id, limit=12)
+        history = self.conversations.recent(conv_id, limit=self.cfg.cognition.history_turns)
         self.conversations.append(conv_id, "user", text)
 
         # spot commitments ("I'll email Sam tomorrow") for later follow-up

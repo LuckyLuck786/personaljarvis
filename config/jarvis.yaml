@@ -5,24 +5,32 @@
 # ============================================================
 
 hub:
-  # Bind to loopback by default. On the hub, either keep loopback and
-  # front with `tailscale serve`, or bind the Tailscale interface IP
-  # directly. Never bind 0.0.0.0 on a machine with a public IP.
+  # 127.0.0.1 = the Mini only (safest). The Telegram bot runs INSIDE this
+  # process and dials out to Telegram, so it works from your phone with NO
+  # open ports and this on loopback. Only change this if you want to reach
+  # the web dashboard from OTHER devices:
+  #   * behind Tailscale: set 0.0.0.0 (the tailnet is your firewall), or
+  #   * bind your tailscale IP directly.
+  # NEVER bind 0.0.0.0 while also forwarding a public port — see DEPLOY.md.
   bind_host: 127.0.0.1
   port: 8700
   # Requests per minute per client IP before 429s. Assume adversarial input.
   rate_limit_per_min: 120
 
-# Node topology. The hub must degrade gracefully when the MacBook sleeps.
+# Node topology. DEFAULT: Mini-only — the hub runs all inference locally.
 nodes:
-  macbook:
-    ollama_url: http://127.0.0.1:11434   # set to Tailscale hostname in prod, e.g. http://macbook.tail-net.ts.net:11434
-    role: primary_inference
-    check_interval_s: 30
   hub_ollama:
-    ollama_url: http://127.0.0.1:11434   # on the hub itself; small models + embeddings only (6 GB RAM)
+    ollama_url: http://127.0.0.1:11434   # Ollama on the Mini itself
     role: embeddings_and_fallback
     check_interval_s: 60
+  # --- OPTIONAL second machine ---------------------------------------
+  # Uncomment and set the URL to add a MacBook (or any box) with bigger
+  # models. Leave it commented for a pure Mini-only setup — the router
+  # simply won't try it, so chat never waits on a sleeping laptop.
+  # macbook:
+  #   ollama_url: http://shaiks-macbook-pro:11434
+  #   role: primary_inference
+  #   check_interval_s: 30
 
 bus:
   poll_interval_s: 1.0     # consumer poll cadence; 1s keeps CPU/RAM negligible
@@ -37,6 +45,15 @@ logging:
   level: INFO
   # JSON to stderr by default (journald-friendly). Set pretty: true for dev.
   pretty: false
+
+cognition:
+  # The agent tool-loop lets you say "remind me at 6pm…", "what are my
+  # tasks?", etc. — but it makes SEVERAL model calls per message, which is
+  # slow on a 6 GB Mini. Set false for fast single-call chat (natural-language
+  # tools stop working in chat; use the dashboard/CLI for tasks instead).
+  use_tools: true
+  # How many recent turns of a conversation to feed back as context.
+  history_turns: 12
 
 tools:
   # file_read / file_list may only touch paths under these roots.

@@ -1,29 +1,43 @@
 # ============================================================
 # Model routing policy — THE single editable file that decides
-# which model serves which request. Consumed by jarvis/router
-# (wired up in Phase 1; schema is final now).
+# which model serves which request.
 #
-# Tier order = failover order. The router health-checks each
-# tier and falls through automatically.
+# DEFAULT PROFILE: MINI-ONLY (self-contained).
+# The hub (Mac Mini) runs everything locally. The MacBook and cloud
+# tiers are OPTIONAL fallbacks — they only engage if you configure
+# them (add the node in jarvis.yaml / add an API key). With hub_ollama
+# first, chat never waits on a sleeping laptop.
+#
+# Tier order in each route = failover order. The router health-checks
+# each tier and falls through automatically.
 # ============================================================
 
 tiers:
-  - name: macbook_ollama
-    kind: ollama
-    node: macbook                    # resolved via nodes.* in jarvis.yaml
-    models:
-      chat: qwen2.5:14b
-      fast: llama3.1:8b
-    privacy: local                   # may see privacy-tagged content
+  # --- always-on local brain (the Mac Mini) ---------------------------
   - name: hub_ollama
     kind: ollama
     node: hub_ollama
     models:
-      chat: qwen2.5:3b              # 6 GB ceiling: 1–3B quantized; qwen2.5 chosen
-                                     # over llama3.2:3b for far better JSON/tool use
-      embed: nomic-embed-text        # always-on embedding path lives here
+      chat: qwen2.5:3b               # 6 GB ceiling: 1–3B quantized. qwen2.5:3b
+                                     # balances quality + tool/JSON adherence.
+                                     # Lighter/faster options: gemma2:2b,
+                                     # qwen2.5:1.5b, llama3.2:1b.
+      embed: nomic-embed-text        # embeddings (always local)
     privacy: local
-    load_on_demand: true             # never pinned in RAM
+    load_on_demand: true             # loaded on demand, not pinned in RAM
+
+  # --- OPTIONAL: a second machine (MacBook) for bigger/faster models --
+  # Only used if you add the `macbook` node in jarvis.yaml. Safe to leave
+  # here unconfigured — the router skips tiers with no node.
+  - name: macbook_ollama
+    kind: ollama
+    node: macbook
+    models:
+      chat: qwen2.5:14b
+      fast: llama3.1:8b
+    privacy: local
+
+  # --- OPTIONAL: cloud fallback (needs API keys in .env) --------------
   - name: groq
     kind: groq
     models:
@@ -42,20 +56,22 @@ tiers:
     privacy: cloud
 
 routes:
-  # task class -> ordered tier preference (subset of tiers above)
-  chat:            [macbook_ollama, groq, cerebras, gemini, hub_ollama]
-  heavy_reasoning: [gemini, macbook_ollama, cerebras, groq]
-  summarize:       [macbook_ollama, groq, gemini, hub_ollama]
-  embed:           [hub_ollama]      # embeddings NEVER depend on the laptop
-  classify_fast:   [groq, macbook_ollama, hub_ollama]
+  # task class -> ordered tier preference. hub_ollama FIRST everywhere so
+  # the Mini answers by default and nothing blocks on the MacBook.
+  chat:            [hub_ollama, macbook_ollama, groq, cerebras, gemini]
+  heavy_reasoning: [hub_ollama, macbook_ollama, gemini, cerebras, groq]
+  summarize:       [hub_ollama, macbook_ollama, groq, gemini]
+  embed:           [hub_ollama]
+  classify_fast:   [hub_ollama, macbook_ollama, groq]
 
 privacy:
   # Content tagged with any of these never leaves privacy: local tiers
   # unless allow_cloud_for_tagged is flipped to true (explicit opt-in).
+  # Since hub_ollama is local and primary, your data stays on the Mini.
   local_only_tags: [personal, capture, health, finance]
   allow_cloud_for_tagged: false
 
-# When every remote tier is down, degrade to hub_ollama + memory-only
-# answers and say so plainly instead of pretending full capability.
+# When every eligible tier is down, degrade to memory-only answers and
+# say so plainly instead of pretending full capability.
 degraded_mode:
   announce: true

@@ -135,7 +135,10 @@ def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> Fast
         permissions=load_permissions(),
     ))
     registry.discover()
-    toolloop = ToolLoop(registry, router, killswitch)
+    # Tool-loop is optional: on a 6 GB Mini, use_tools:false gives fast
+    # single-call chat (proactive reminders still fire; you just can't create
+    # them by chatting). Tools/registry stay available to the rest of the hub.
+    toolloop = ToolLoop(registry, router, killswitch) if cfg.cognition.use_tools else None
     followups = FollowupStore(cfg.db_path, vault)
 
     # Phase 7 advanced

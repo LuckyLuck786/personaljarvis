@@ -50,8 +50,8 @@ def _check_secrets(cfg) -> list[Check]:
                      fix="" if tg else "set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USER_IDS"))
     cloud = any([s.groq_api_key, s.cerebras_api_key, s.gemini_api_key])
     out.append(Check("Cloud fallback configured", OK if cloud else WARN,
-                     detail="" if cloud else "no cloud tier — degraded when MacBook asleep",
-                     fix="" if cloud else "add GROQ_API_KEY (free, fast) to .env"))
+                     detail="" if cloud else "optional — the local hub model is primary",
+                     fix="" if cloud else "add GROQ_API_KEY for a fast cloud fallback (optional)"))
     return out
 
 
