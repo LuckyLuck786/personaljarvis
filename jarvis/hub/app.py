@@ -16,9 +16,12 @@ from fastapi import FastAPI, Query, Request
 from pydantic import BaseModel, Field
 
 import jarvis
+from jarvis.cognition.agent import ChatAgent
+from jarvis.cognition.conversation import ConversationLog
 from jarvis.core.audit import AuditLog
 from jarvis.core.bus import Bus
 from jarvis.core.config import Config, load_config
+from jarvis.core.crypto import Vault
 from jarvis.core.db import migrate
 from jarvis.core.killswitch import KillSwitch
 from jarvis.core.logging import get_logger, setup_logging
@@ -28,6 +31,10 @@ from jarvis.core.security import (
     RateLimitMiddleware,
 )
 from jarvis.hub.health import NodeMonitor, cloud_tier_status, hub_self_health
+from jarvis.interfaces.telegram_bot import TelegramInterface
+from jarvis.memory.embeddings import OllamaEmbedder
+from jarvis.memory.store import MemoryStore
+from jarvis.router.router import ModelRouter, load_routing
 
 log = get_logger(__name__)
 
@@ -41,7 +48,32 @@ class PublishRequest(BaseModel):
     payload: dict = Field(default_factory=dict)
 
 
-def create_app(cfg: Config | None = None) -> FastAPI:
+class ChatRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=8000)
+    session: str | None = Field(default=None, max_length=100)
+
+
+class IngestRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=200_000)
+    kind: str = Field(default="note", pattern=r"^[a-z_]+$", max_length=30)
+    source: str = Field(default="api", max_length=100)
+    tags: list[str] = Field(default_factory=lambda: ["personal"], max_length=10)
+
+
+def _build_embedder(cfg: Config, routing: dict) -> OllamaEmbedder:
+    """The embed route's first tier defines where embeddings run — the hub's
+    own Ollama by design, so memory never blocks on the laptop."""
+    tier_name = routing["routes"]["embed"][0]
+    tier = next(t for t in routing["tiers"] if t["name"] == tier_name)
+    node = cfg.nodes.get(tier.get("node", ""))
+    if not node or not node.ollama_url:
+        raise ValueError(
+            f"embed tier '{tier_name}' has no node/ollama_url in config/jarvis.yaml"
+        )
+    return OllamaEmbedder(node.ollama_url, tier["models"]["embed"])
+
+
+def create_app(cfg: Config | None = None, *, embedder=None, router=None) -> FastAPI:
     cfg = cfg or load_config()
     setup_logging(cfg.logging.level, cfg.logging.pretty or None)
 
@@ -53,6 +85,12 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             " Run `jarvis keygen`."
         )
 
+    if not cfg.secrets.jarvis_master_key:
+        raise ValueError(
+            "JARVIS_MASTER_KEY is not set — memory encryption is mandatory."
+            " Run `jarvis keygen`."
+        )
+
     migrate(cfg.db_path)
     bus = Bus(cfg.db_path, cfg.bus.poll_interval_s, cfg.bus.max_attempts)
     audit = AuditLog(cfg.db_path)
@@ -60,12 +98,27 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     monitor = NodeMonitor(cfg, bus)
     started_at = time.time()
 
+    # -- Phase 1 core: memory, router, cognition, telegram --------------------
+    vault = Vault(cfg.secrets.jarvis_master_key)
+    routing = load_routing()
+    if embedder is None:
+        embedder = _build_embedder(cfg, routing)
+    store = MemoryStore(cfg, vault, embedder)
+    if router is None:
+        router = ModelRouter(cfg, routing, bus, node_status=monitor.statuses)
+    conversations = ConversationLog(cfg.db_path, vault)
+    agent = ChatAgent(cfg, store, router, conversations, killswitch, audit)
+    telegram = TelegramInterface(cfg, agent, killswitch, audit, monitor.statuses)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         monitor_task = asyncio.create_task(monitor.run())
+        await telegram.start()  # no-op with truthful log line if unconfigured
         bus.publish("system.hub", {"event": "started", "version": jarvis.__version__})
-        log.info("hub_started", version=jarvis.__version__, data_dir=str(cfg.data_dir))
+        log.info("hub_started", version=jarvis.__version__, data_dir=str(cfg.data_dir),
+                 telegram="on" if telegram.configured else "off")
         yield
+        await telegram.stop()
         monitor.stop()
         monitor_task.cancel()
         try:
@@ -88,6 +141,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     app.state.audit = audit
     app.state.killswitch = killswitch
     app.state.monitor = monitor
+    app.state.store = store
+    app.state.router = router
+    app.state.agent = agent
 
     # -- health ---------------------------------------------------------
 
@@ -142,6 +198,31 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     ):
         messages = bus.tail(topic=topic, after_id=after_id, limit=limit)
         return {"messages": [m.__dict__ for m in messages]}
+
+    # -- chat + memory (Phase 1) ----------------------------------------------
+
+    @app.post("/chat")
+    async def chat(body: ChatRequest):
+        return await agent.handle(body.text, interface="api", external_id=body.session)
+
+    @app.post("/memory/ingest")
+    async def memory_ingest(body: IngestRequest):
+        doc_id = await store.ingest(body.text, kind=body.kind, source=body.source,
+                                    tags=tuple(body.tags))
+        audit.record("api", "memory.ingest", {"doc_id": doc_id, "kind": body.kind})
+        return {"doc_id": doc_id}
+
+    @app.get("/memory/search")
+    async def memory_search(
+        q: str = Query(min_length=1, max_length=1000),
+        k: int = Query(default=6, ge=1, le=50),
+    ):
+        results = await store.search(q, k=k)
+        return {"results": [r.__dict__ for r in results]}
+
+    @app.get("/memory/recent")
+    def memory_recent(limit: int = Query(default=20, ge=1, le=200)):
+        return {"docs": store.recent_docs(limit=limit)}
 
     # -- audit ---------------------------------------------------------------
 

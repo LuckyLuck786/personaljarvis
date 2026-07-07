@@ -123,6 +123,38 @@ def cmd_status(args) -> None:
     print(f"  cloud: {cloud}")
 
 
+def cmd_chat(args) -> None:
+    with _client() as c:
+        r = c.post("/chat", json={"text": args.text, "session": "cli"},
+                   timeout=300)  # local models on modest hardware can be slow
+        r.raise_for_status()
+        d = r.json()
+    print(d["reply"])
+    print(f"  ── tier={d['tier']} model={d['model']} {d['latency_ms']}ms "
+          f"memories_used={d['memories_used']}", file=sys.stderr)
+
+
+def cmd_remember(args) -> None:
+    with _client() as c:
+        r = c.post("/memory/ingest",
+                   json={"text": args.text, "kind": "note", "source": "cli"},
+                   timeout=120)
+        r.raise_for_status()
+        print(f"noted (doc {r.json()['doc_id']})")
+
+
+def cmd_recall(args) -> None:
+    with _client() as c:
+        r = c.get("/memory/search", params={"q": args.query, "k": args.k}, timeout=120)
+        r.raise_for_status()
+        results = r.json()["results"]
+    if not results:
+        print("nothing in memory for that")
+    for res in results:
+        ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(res["ts"]))
+        print(f"[{res['score']:.4f}] ({res['kind']}/{res['source']} {ts}) {res['text'][:200]}")
+
+
 def cmd_pause(args) -> None:
     with _client() as c:
         r = c.post("/control/pause", json={"reason": args.reason})
@@ -184,6 +216,19 @@ def main() -> None:
     sub.add_parser("migrate", help="apply DB migrations").set_defaults(fn=cmd_migrate)
     sub.add_parser("serve", help="run the hub daemon").set_defaults(fn=cmd_serve)
     sub.add_parser("status", help="hub + node health").set_defaults(fn=cmd_status)
+
+    ch = sub.add_parser("chat", help="talk to JARVIS")
+    ch.add_argument("text")
+    ch.set_defaults(fn=cmd_chat)
+
+    rm = sub.add_parser("remember", help="store a note in memory")
+    rm.add_argument("text")
+    rm.set_defaults(fn=cmd_remember)
+
+    rc = sub.add_parser("recall", help="search memory")
+    rc.add_argument("query")
+    rc.add_argument("-k", type=int, default=6)
+    rc.set_defaults(fn=cmd_recall)
 
     pz = sub.add_parser("pause", help="engage kill switch")
     pz.add_argument("--reason", default="operator request")

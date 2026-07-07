@@ -14,6 +14,8 @@ dependencies = [
     "cryptography>=42.0",
     "pyyaml>=6.0",
     "psutil>=5.9",
+    "lancedb>=0.15",              # on-disk vector store; no server process (6 GB hub)
+    "python-telegram-bot>=21.0",
 ]
 
 [project.optional-dependencies]
