@@ -37,3 +37,14 @@ logging:
   level: INFO
   # JSON to stderr by default (journald-friendly). Set pretty: true for dev.
   pretty: false
+
+tools:
+  # file_read / file_list may only touch paths under these roots.
+  files_allowed_roots: ["~/notes", "~/projects"]
+  # Calendar: ICS URLs (Google Calendar 'secret address in iCal format',
+  # Fastmail, etc.) or local .ics file paths.
+  calendar_ics_urls: []
+  # Home-lab nodes for allow-listed commands over ssh: name -> user@host.
+  # Requires key-based ssh already set up from the hub.
+  homelab: {}
+  #   mini: jarvis@100.64.0.1

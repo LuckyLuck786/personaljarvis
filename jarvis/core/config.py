@@ -47,6 +47,15 @@ class LoggingConfig(BaseModel):
     pretty: bool = False
 
 
+class ToolsConfig(BaseModel):
+    # file_read/file_list may only touch paths under these roots
+    files_allowed_roots: list[str] = Field(default_factory=list)
+    # ICS URLs (or local .ics paths) the calendar tool reads
+    calendar_ics_urls: list[str] = Field(default_factory=list)
+    # home-lab nodes reachable via ssh for allow-listed commands: name -> user@host
+    homelab: dict[str, str] = Field(default_factory=dict)
+
+
 class Secrets(BaseSettings):
     """Secrets come exclusively from the environment / .env — never YAML."""
 
@@ -59,6 +68,10 @@ class Secrets(BaseSettings):
     groq_api_key: str = ""
     cerebras_api_key: str = ""
     gemini_api_key: str = ""
+    imap_host: str = ""
+    imap_user: str = ""
+    imap_password: str = ""
+    imap_folder: str = "INBOX"
 
     def __repr__(self) -> str:  # keep secrets out of logs and tracebacks
         return "Secrets(<redacted>)"
@@ -73,6 +86,7 @@ class Config(BaseModel):
     bus: BusConfig = Field(default_factory=BusConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
     secrets: Secrets = Field(default_factory=Secrets, repr=False)
 
     @property
@@ -118,5 +132,6 @@ def load_config(
         bus=BusConfig(**raw.get("bus", {})),
         health=HealthConfig(**raw.get("health", {})),
         logging=LoggingConfig(**raw.get("logging", {})),
+        tools=ToolsConfig(**raw.get("tools", {})),
         secrets=secrets,
     )

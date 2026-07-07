@@ -19,7 +19,8 @@ tiers:
     kind: ollama
     node: hub_ollama
     models:
-      chat: llama3.2:3b              # 6 GB RAM ceiling: 1–3B quantized only
+      chat: qwen2.5:3b              # 6 GB ceiling: 1–3B quantized; qwen2.5 chosen
+                                     # over llama3.2:3b for far better JSON/tool use
       embed: nomic-embed-text        # always-on embedding path lives here
     privacy: local
     load_on_demand: true             # never pinned in RAM

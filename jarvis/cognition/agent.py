@@ -11,6 +11,7 @@ this class is where it will live.
 
 from __future__ import annotations
 
+import re
 import time
 
 from jarvis.cognition.conversation import ConversationLog
@@ -26,18 +27,21 @@ log = get_logger(__name__)
 
 NOTE_PREFIXES = ("remember ", "remember:", "note:", "note that ")
 PAUSED_REPLY = "I'm paused (kill switch engaged). Resume me first, sir."
+CONFIRM_RE = re.compile(r"^\s*confirm\s+([0-9a-f]{6})\s*$", re.IGNORECASE)
 
 
 class ChatAgent:
     def __init__(self, cfg: Config, store: MemoryStore, router: ModelRouter,
                  conversations: ConversationLog, killswitch: KillSwitch,
-                 audit: AuditLog):
+                 audit: AuditLog, toolloop=None, registry=None):
         self.cfg = cfg
         self.store = store
         self.router = router
         self.conversations = conversations
         self.killswitch = killswitch
         self.audit = audit
+        self.toolloop = toolloop      # None → plain memory-grounded chat
+        self.registry = registry
 
     def _build_messages(self, history: list[dict], memories, user_text: str) -> list[dict]:
         system = SYSTEM_PROMPT
@@ -61,6 +65,23 @@ class ChatAgent:
             return {"reply": PAUSED_REPLY, "tier": None, "model": None,
                     "latency_ms": 0, "memories_used": 0}
 
+        # 'confirm <token>' executes a parked destructive action — handled
+        # deterministically, never via the model
+        if self.registry and (m := CONFIRM_RE.match(text)):
+            from jarvis.tools.registry import ToolError
+
+            try:
+                outcome = await self.registry.confirm(m.group(1).lower(),
+                                                      interface, self.killswitch)
+                reply = f"Confirmed and executed:\n{outcome}"
+            except ToolError as exc:
+                reply = str(exc)
+            conv_id = self.conversations.get_or_create(interface, external_id)
+            self.conversations.append(conv_id, "user", text)
+            self.conversations.append(conv_id, "assistant", reply, tier="tool")
+            return {"reply": reply, "tier": "tool", "model": None,
+                    "latency_ms": 0, "memories_used": 0}
+
         conv_id = self.conversations.get_or_create(interface, external_id)
         history = self.conversations.recent(conv_id, limit=12)
         self.conversations.append(conv_id, "user", text)
@@ -82,10 +103,19 @@ class ChatAgent:
             memory_ok = False
             memories = []
         messages = self._build_messages(history, memories, text)
+        tools_used: list[str] = []
         try:
-            result = await self.router.chat("chat", messages, privacy_tags=("personal",))
-            reply, tier, model, latency = (result.text, result.tier,
-                                           result.model, result.latency_ms)
+            if self.toolloop is not None:
+                loop_result = await self.toolloop.run(messages, interface,
+                                                      privacy_tags=("personal",))
+                reply, tier, model, latency = (loop_result["reply"],
+                                               loop_result["tier"], None, 0)
+                tools_used = loop_result["tools_used"]
+            else:
+                result = await self.router.chat("chat", messages,
+                                                privacy_tags=("personal",))
+                reply, tier, model, latency = (result.text, result.tier,
+                                               result.model, result.latency_ms)
         except DegradedError as exc:
             reply, tier, model, latency = DEGRADED_REPLY, "degraded", None, 0
             log.warning("chat_degraded", attempts=exc.attempts)
@@ -101,6 +131,7 @@ class ChatAgent:
                 log.exception("memory_unavailable")
         self.audit.record(interface, "chat.message",
                           {"chars_in": len(text), "chars_out": len(reply),
-                           "tier": tier}, "ok")
+                           "tier": tier, "tools_used": tools_used}, "ok")
         return {"reply": reply, "tier": tier, "model": model,
-                "latency_ms": latency, "memories_used": len(memories)}
+                "latency_ms": latency, "memories_used": len(memories),
+                "tools_used": tools_used}
