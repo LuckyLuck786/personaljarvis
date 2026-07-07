@@ -1,0 +1,35 @@
+# JARVIS hub daemon — the always-on brain-stem on the Ubuntu Mac Mini.
+# Installed by deploy/install-hub.sh to /etc/systemd/system/.
+[Unit]
+Description=JARVIS hub (orchestrator, bus, health, control)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jarvis
+Group=jarvis
+WorkingDirectory=/opt/jarvis
+EnvironmentFile=/etc/jarvis/jarvis.env
+Environment=JARVIS_DATA_DIR=/var/lib/jarvis
+Environment=JARVIS_CONFIG=/opt/jarvis/config/jarvis.yaml
+ExecStart=/opt/jarvis/.venv/bin/jarvis serve
+Restart=always
+RestartSec=3
+
+# --- RAM budget: hard ceiling on a 6 GB machine. Measured Phase 0 RSS is
+# ~60-70 MB; the cap leaves headroom for the Phase 1 memory pipeline while
+# guaranteeing the hub can never eat the machine.
+MemoryHigh=512M
+MemoryMax=1G
+
+# --- Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/jarvis
+PrivateTmp=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
