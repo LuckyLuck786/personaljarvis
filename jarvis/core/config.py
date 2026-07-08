@@ -62,8 +62,11 @@ class CognitionConfig(BaseModel):
     use_tools: bool = True
     history_turns: int = 12
     # how many memory snippets to retrieve into the prompt; fewer = shorter
-    # prompt = faster on a slow CPU
+    # prompt = faster on a slow CPU. With cloud models you can raise this.
     memory_k: int = 6
+    # appended to the base persona — use it to tune verbosity/style, e.g.
+    # "Give thorough, detailed answers with examples when the topic warrants."
+    extra_system_prompt: str = ""
     # how long to wait for a local Ollama generation before giving up. Old
     # CPUs need more; raise it if you see 'ReadTimeout talking to …/api/chat'.
     ollama_timeout_s: float = 300.0
@@ -83,6 +86,8 @@ class Secrets(BaseSettings):
     groq_api_key: str = ""
     cerebras_api_key: str = ""
     gemini_api_key: str = ""
+    brave_api_key: str = ""
+    tavily_api_key: str = ""
     imap_host: str = ""
     imap_user: str = ""
     imap_password: str = ""

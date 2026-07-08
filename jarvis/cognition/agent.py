@@ -48,6 +48,8 @@ class ChatAgent:
 
     def _build_messages(self, history: list[dict], memories, user_text: str) -> list[dict]:
         system = SYSTEM_PROMPT
+        if extra := self.cfg.cognition.extra_system_prompt.strip():
+            system += f"\n\n{extra}"
         if self.twin is not None:
             try:
                 system += self.twin.current_prompt_block()

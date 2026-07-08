@@ -48,12 +48,16 @@ logging:
 
 cognition:
   # The agent tool-loop lets you say "remind me at 6pm…", "what are my
-  # tasks?", etc. — but it makes SEVERAL model calls per message, which is
-  # slow on a 6 GB Mini. Set false for fast single-call chat (natural-language
-  # tools stop working in chat; use the dashboard/CLI for tasks instead).
+  # tasks?", "search the web for…", etc. — but it makes SEVERAL model calls
+  # per message. On fast cloud tiers keep it on; on a slow local-only Mini
+  # set false for single-call chat (tools then only via dashboard/CLI).
   use_tools: true
   # How many recent turns of a conversation to feed back as context.
   history_turns: 12
+  # Extra persona/style instruction appended to the base prompt. Empty keeps
+  # the concise butler; set e.g. "Give thorough, detailed answers with
+  # examples." for a more ChatGPT-like verbose assistant.
+  extra_system_prompt: ""
 
 tools:
   # file_read / file_list may only touch paths under these roots.
